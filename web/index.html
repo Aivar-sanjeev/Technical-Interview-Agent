@@ -4,30 +4,519 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Technical Interview Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
-    textarea { width: 100%; min-height: 120px; }
-    button { margin-top: 0.5rem; padding: 0.5rem 1rem; }
+    :root {
+      --bg: #0c0f14;
+      --bg2: #121822;
+      --panel: #151b26;
+      --border: #243044;
+      --text: #e8edf7;
+      --muted: #8b98b3;
+      --accent: #5eead4;
+      --accent2: #38bdf8;
+      --warn: #fbbf24;
+      --danger: #f87171;
+      --radius: 12px;
+      --shadow: 0 18px 50px rgba(0,0,0,.45);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: radial-gradient(1200px 600px at 10% -10%, rgba(56,189,248,.12), transparent 55%),
+                  radial-gradient(900px 500px at 90% 0%, rgba(94,234,212,.1), transparent 50%),
+                  var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+      background: rgba(12,15,20,.75);
+      backdrop-filter: blur(10px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 1rem 1.25rem; }
+    h1 { font-size: 1.15rem; font-weight: 700; margin: 0; letter-spacing: -0.02em; }
+    .sub { color: var(--muted); font-size: .85rem; margin-top: .2rem; }
+    main.wrap { padding-top: 1.25rem; padding-bottom: 3rem; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+    @media (min-width: 960px) {
+      .grid.interview { grid-template-columns: 1fr 320px; align-items: start; }
+    }
+    .card {
+      background: linear-gradient(180deg, rgba(21,27,38,.95), rgba(18,24,34,.92));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .card h2 {
+      margin: 0 0 .75rem;
+      font-size: .95rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .inner { padding: 1.1rem 1.15rem; }
+    label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: .35rem; }
+    textarea, input[type="password"], input[type="text"] {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg2);
+      color: var(--text);
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: .8rem;
+      padding: .65rem .75rem;
+      outline: none;
+    }
+    textarea:focus, input:focus { border-color: rgba(94,234,212,.45); box-shadow: 0 0 0 3px rgba(94,234,212,.12); }
+    textarea { min-height: 140px; resize: vertical; }
+    .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .65rem; }
+    button {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 10px;
+      padding: .55rem .85rem;
+      font-weight: 600;
+      font-size: .85rem;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    button.primary {
+      border-color: rgba(94,234,212,.35);
+      background: linear-gradient(135deg, rgba(94,234,212,.18), rgba(56,189,248,.12));
+    }
+    button.primary:hover { filter: brightness(1.08); }
+    button.ghost { background: transparent; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: .35rem;
+      padding: .2rem .55rem;
+      border-radius: 999px;
+      font-size: .72rem;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .steps { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .step {
+      padding: .35rem .65rem;
+      border-radius: 999px;
+      font-size: .75rem;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .step.on { border-color: rgba(94,234,212,.45); color: var(--text); background: rgba(94,234,212,.08); }
+    .chat {
+      display: flex;
+      flex-direction: column;
+      gap: .65rem;
+      max-height: min(62vh, 640px);
+      overflow-y: auto;
+      padding-right: .25rem;
+    }
+    .bubble {
+      max-width: 92%;
+      padding: .75rem .85rem;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      font-size: .92rem;
+      white-space: pre-wrap;
+    }
+    .bubble.iv { align-self: flex-start; background: rgba(56,189,248,.08); }
+    .bubble.ca { align-self: flex-end; background: rgba(94,234,212,.07); }
+    .bubble.sy { align-self: center; max-width: 96%; background: rgba(251,191,36,.08); border-color: rgba(251,191,36,.25); font-size: .82rem; color: #fde68a; }
+    .typing { font-size: .8rem; color: var(--muted); font-style: italic; }
+    .plan-list { display: flex; flex-direction: column; gap: .5rem; max-height: 360px; overflow: auto; }
+    .pq {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: .55rem .65rem;
+      font-size: .82rem;
+    }
+    .pq b { color: var(--accent); font-family: "JetBrains Mono", monospace; font-size: .75rem; }
+    .side .inner { position: sticky; top: 5.5rem; }
+    .error { color: var(--danger); font-size: .85rem; margin-top: .35rem; }
+    .ok { color: var(--accent); font-size: .85rem; margin-top: .35rem; }
+    .overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.55);
+      display: none; align-items: center; justify-content: center; z-index: 50;
+    }
+    .overlay.on { display: flex; }
+    .spinner {
+      width: 42px; height: 42px; border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.15);
+      border-top-color: var(--accent);
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .kbd { font-family: "JetBrains Mono", monospace; font-size: .72rem; border: 1px solid var(--border); padding: .1rem .35rem; border-radius: 6px; color: var(--muted); }
   </style>
 </head>
 <body>
-  <h1>Technical Interview Agent (phase 1)</h1>
-  <p>POST <code>/api/plan</code> with job description and candidate profile. Full UI arrives in phase 2.</p>
-  <label>Job description<br /><textarea id="jd"></textarea></label>
-  <label>Candidate profile<br /><textarea id="cp"></textarea></label>
-  <p><button type="button" id="go">Generate plan</button></p>
-  <pre id="out"></pre>
+  <header>
+    <div class="wrap">
+      <h1>Technical Interview Agent</h1>
+      <div class="sub">Tailored questions · Live Groq interview · Structured evaluation (evaluate after phase 3)</div>
+    </div>
+  </header>
+  <main class="wrap">
+    <div class="steps" id="steps">
+      <span class="step on" data-s="1">1 · Inputs</span>
+      <span class="step" data-s="2">2 · Question plan</span>
+      <span class="step" data-s="3">3 · Interview</span>
+      <span class="step" data-s="4">4 · Report</span>
+    </div>
+
+    <div class="grid" id="screen1">
+      <div class="card">
+        <div class="inner">
+          <h2>Credentials</h2>
+          <label>Groq API key <span class="pill">optional if set in .env</span></label>
+          <input type="password" id="groqKey" autocomplete="off" placeholder="gsk_…" />
+          <div class="row" style="margin-top:1rem">
+            <button type="button" class="ghost" id="loadBackend">Load backend fixture</button>
+            <button type="button" class="ghost" id="loadMl">Load ML fixture</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="inner">
+          <h2>Job description</h2>
+          <textarea id="jd"></textarea>
+        </div>
+      </div>
+      <div class="card">
+        <div class="inner">
+          <h2>Candidate profile</h2>
+          <textarea id="cp"></textarea>
+          <div class="row">
+            <button type="button" class="primary" id="btnPlan">Generate question plan</button>
+          </div>
+          <div class="error" id="err1" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid interview" id="screen2" style="display:none;margin-top:1rem">
+      <div class="card">
+        <div class="inner">
+          <h2>Interview plan</h2>
+          <p class="sub" style="margin:0 0 .75rem" id="planMeta"></p>
+          <div class="plan-list" id="planList"></div>
+          <div class="row" style="margin-top:.85rem">
+            <button type="button" class="primary" id="btnStart">Start interview session</button>
+            <button type="button" class="ghost" id="btnBack1">Edit inputs</button>
+          </div>
+          <div class="error" id="err2" style="display:none"></div>
+        </div>
+      </div>
+      <div class="card side">
+        <div class="inner">
+          <h2>Flow</h2>
+          <p style="font-size:.85rem;color:var(--muted);margin:0">Generate a plan, start the session, then open the live interview tab. Use scenario buttons to simulate silence, clarification, or off-topic replies.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid interview" id="screen3" style="display:none;margin-top:1rem">
+      <div class="card">
+        <div class="inner">
+          <h2>Live interview</h2>
+          <div class="row" style="margin-bottom:.5rem">
+            <span class="pill" id="qProgress">Q —</span>
+            <button type="button" class="ghost" id="btnNextQ">Next question</button>
+            <button type="button" class="ghost" id="btnToEval" disabled title="Available after evaluator is wired">Evaluate</button>
+          </div>
+          <div class="chat" id="chat"></div>
+          <div class="typing" id="typing" style="display:none">Interviewer is typing…</div>
+          <div style="margin-top:.75rem">
+            <label>Your answer</label>
+            <textarea id="answer" style="min-height:88px"></textarea>
+            <div class="row">
+              <button type="button" class="primary" id="btnSend">Send</button>
+              <button type="button" class="ghost" id="btnSilence">Silence / stuck</button>
+              <button type="button" class="ghost" id="btnClarify">Need clarification</button>
+              <button type="button" class="ghost" id="btnOff">Off-topic</button>
+            </div>
+          </div>
+          <div class="error" id="err3" style="display:none"></div>
+        </div>
+      </div>
+      <div class="card side">
+        <div class="inner">
+          <h2>Session</h2>
+          <p style="font-size:.82rem;color:var(--muted);word-break:break-all;margin:0" id="sid"></p>
+          <div class="row" style="margin-top:.75rem">
+            <button type="button" class="ghost" id="btnPlan2">Back to plan</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="screen4" style="display:none;margin-top:1rem">
+      <div class="card">
+        <div class="inner">
+          <h2>Evaluation report</h2>
+          <p class="sub" id="evalHint">Run evaluation from the latest code — endpoint <span class="kbd">POST /api/evaluate</span>.</p>
+          <pre id="evalOut" style="display:none;white-space:pre-wrap;font-size:.78rem"></pre>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div class="overlay" id="overlay"><div class="spinner" aria-label="Loading"></div></div>
+
   <script>
-    document.getElementById("go").onclick = async () => {
-      const r = await fetch("/api/plan", {
+    const $ = (id) => document.getElementById(id);
+    const overlay = $("overlay");
+    const show = (el, on) => { el.style.display = on ? "" : "none"; };
+
+    let planJson = null;
+    let sessionId = null;
+    let pendingEvent = "normal";
+
+    function setStep(n) {
+      document.querySelectorAll(".step").forEach((s) => {
+        s.classList.toggle("on", s.dataset.s === String(n));
+      });
+    }
+
+    function groqBody(extra) {
+      const k = $("groqKey").value.trim();
+      const o = { ...extra };
+      if (k) o.groq_api_key = k;
+      return o;
+    }
+
+    async function loadFixture(which) {
+      const base = "/fixtures/";
+      const files = which === "ml"
+        ? ["jd_ml.md", "profile_ml.md"]
+        : ["jd_backend.md", "profile_backend.md"];
+      const [jd, cp] = await Promise.all(files.map((f) => fetch(base + f).then((r) => r.text())));
+      $("jd").value = jd;
+      $("cp").value = cp;
+    }
+
+    $("loadBackend").onclick = () => loadFixture("backend");
+    $("loadMl").onclick = () => loadFixture("ml");
+
+    $("btnPlan").onclick = async () => {
+      $("err1").style.display = "none";
+      overlay.classList.add("on");
+      try {
+        const r = await fetch("/api/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            groqBody({
+              job_description: $("jd").value,
+              candidate_profile: $("cp").value,
+            })
+          ),
+        });
+        const t = await r.json();
+        if (!r.ok) throw new Error(t.detail || JSON.stringify(t));
+        planJson = t;
+        $("planMeta").textContent = `${t.role_title || "Role"} · ${t.assumed_seniority || ""} · ${(t.questions || []).length} questions`;
+        const list = $("planList");
+        list.innerHTML = "";
+        (t.questions || []).forEach((q) => {
+          const d = document.createElement("div");
+          d.className = "pq";
+          d.innerHTML = `<b>${q.id}</b> · ${q.section}<br/>${escapeHtml(q.stem)}`;
+          list.appendChild(d);
+        });
+        show($("screen1"), false);
+        show($("screen2"), true);
+        setStep("2");
+      } catch (e) {
+        $("err1").textContent = e.message || String(e);
+        $("err1").style.display = "";
+      } finally {
+        overlay.classList.remove("on");
+      }
+    };
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    $("btnBack1").onclick = () => {
+      show($("screen2"), false);
+      show($("screen1"), true);
+      setStep("1");
+    };
+
+    function renderTurn(t) {
+      const d = document.createElement("div");
+      d.className = "bubble " + (t.role === "interviewer" ? "iv" : t.role === "candidate" ? "ca" : "sy");
+      d.textContent = (t.role === "interviewer" ? "Interviewer: " : t.role === "candidate" ? "You: " : "Note: ") + t.text;
+      $("chat").appendChild(d);
+    }
+
+    async function streamChat(payload) {
+      $("err3").style.display = "none";
+      $("typing").style.display = "";
+      const r = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          job_description: document.getElementById("jd").value,
-          candidate_profile: document.getElementById("cp").value,
-        }),
+        body: JSON.stringify(payload),
       });
-      document.getElementById("out").textContent = await r.text();
+      if (!r.ok || !r.body) {
+        $("typing").style.display = "none";
+        const t = await r.text();
+        throw new Error(t);
+      }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let acc = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (value) buf += dec.decode(value, { stream: !done });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() || "";
+        for (const block of parts) {
+          const line = block.trim().split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          const json = JSON.parse(line.slice(5).trim());
+          if (json.token) acc += json.token;
+          if (json.error) throw new Error(json.error);
+        }
+        if (done) break;
+      }
+      if (buf.trim()) {
+        for (const block of buf.split("\n\n")) {
+          const line = block.trim().split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          const json = JSON.parse(line.slice(5).trim());
+          if (json.token) acc += json.token;
+          if (json.error) throw new Error(json.error);
+        }
+      }
+      $("typing").style.display = "none";
+      if (acc.trim()) {
+        renderTurn({ role: "interviewer", text: acc.trim() });
+      }
+    }
+
+    $("btnStart").onclick = async () => {
+      $("err2").style.display = "none";
+      overlay.classList.add("on");
+      try {
+        const r = await fetch("/api/session/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(groqBody({ plan: planJson })),
+        });
+        const t = await r.json();
+        if (!r.ok) throw new Error(t.detail || JSON.stringify(t));
+        sessionId = t.session_id;
+        $("chat").innerHTML = "";
+        $("sid").textContent = sessionId;
+        show($("screen2"), false);
+        show($("screen3"), true);
+        setStep("3");
+        pendingEvent = "normal";
+        await streamChat({
+          session_id: sessionId,
+          message: "",
+          event_type: "normal",
+          action: "opening",
+        });
+        await refreshMeta();
+      } catch (e) {
+        $("err2").textContent = e.message || String(e);
+        $("err2").style.display = "";
+      } finally {
+        overlay.classList.remove("on");
+      }
+    };
+
+    async function refreshMeta() {
+      if (!sessionId) return;
+      const r = await fetch("/api/session/" + encodeURIComponent(sessionId));
+      const t = await r.json();
+      $("qProgress").textContent = `Q ${(t.q_index ?? 0) + 1} / ${(t.plan && t.plan.questions && t.plan.questions.length) || "—"}`;
+    }
+
+    $("btnSend").onclick = async () => {
+      if (!sessionId) return;
+      const msg = $("answer").value.trim();
+      const ev = pendingEvent;
+      pendingEvent = "normal";
+      if (!msg && ev === "normal") {
+        $("err3").textContent = "Type an answer, or use a scenario button.";
+        $("err3").style.display = "";
+        return;
+      }
+      if (msg) renderTurn({ role: "candidate", text: msg });
+      $("answer").value = "";
+      overlay.classList.add("on");
+      try {
+        await streamChat({
+          session_id: sessionId,
+          message: msg,
+          event_type: ev,
+          action: "reply",
+        });
+        await refreshMeta();
+      } catch (e) {
+        $("err3").textContent = e.message || String(e);
+        $("err3").style.display = "";
+      } finally {
+        overlay.classList.remove("on");
+      }
+    };
+
+    $("btnSilence").onclick = () => {
+      pendingEvent = "silence";
+      $("answer").placeholder = "Optional note — leave empty for pure silence turn";
+    };
+    $("btnClarify").onclick = () => {
+      pendingEvent = "clarify_request";
+      $("answer").placeholder = "Optional: what part should be clarified?";
+    };
+    $("btnOff").onclick = () => {
+      pendingEvent = "off_topic";
+      $("answer").placeholder = "Optional context — leave empty to just redirect";
+    };
+
+    $("btnNextQ").onclick = async () => {
+      if (!sessionId) return;
+      overlay.classList.add("on");
+      try {
+        await streamChat({
+          session_id: sessionId,
+          message: "",
+          event_type: "normal",
+          action: "advance_question",
+        });
+        await refreshMeta();
+      } catch (e) {
+        $("err3").textContent = e.message || String(e);
+        $("err3").style.display = "";
+      } finally {
+        overlay.classList.remove("on");
+      }
+    };
+
+    $("btnPlan2").onclick = () => {
+      show($("screen3"), false);
+      show($("screen2"), true);
+      setStep("2");
     };
   </script>
 </body>
