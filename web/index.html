@@ -640,7 +640,7 @@
         setStep("4");
         renderReport(t.report);
         $("evalRender").style.display = "";
-        const issues = [...(t.validation_issues || []), ...(t.residual_issues || [])].filter(Boolean);
+        const issues = [...(t.validation_issues || [])].filter(Boolean);
         if (issues.length) {
           $("evalIssues").textContent = "Validation notes: " + issues.join(" | ");
           $("evalIssues").style.display = "";

@@ -25,7 +25,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.conductor import stream_interviewer_reply
-from src.evaluator import evaluate_with_repair, validate_report_against_transcript
+from src.evaluator import evaluate_with_repair
 from src.question_generator import generate_interview_plan
 from src.schemas import InterviewPlan, Transcript, TranscriptTurn
 
@@ -300,12 +300,10 @@ async def api_evaluate(body: EvaluateIn) -> JSONResponse:
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Groq error: {e!s}") from e
 
-    residual = validate_report_against_transcript(report, transcript)
     return JSONResponse(
         {
             "report": report.model_dump(),
             "validation_issues": issues,
-            "residual_issues": residual,
         }
     )
 
