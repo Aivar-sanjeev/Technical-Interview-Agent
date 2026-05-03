@@ -1,26 +1,30 @@
-"""Shared data contracts for plan generation, interview sessions, and evaluation.
+"""Contracts for plan generation, live interview, and evaluation (PLAN-aligned questions).
 
-Other modules depend only on these types — not on each other's implementation.
+Components share these types only — no cross-imports of implementation.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
 
+class DepthProbe(BaseModel):
+    probe: str
+    listen_for: str = Field(default="", description="Internal signal — not shown to candidate verbatim")
+
+
 class PlanQuestion(BaseModel):
-    id: str = Field(description="Stable id, e.g. q-1")
-    stem: str = Field(description="Main question text as asked in interview")
-    intent: str = Field(description="What signal this question probes")
-    difficulty: Literal["easy", "medium", "hard"] = "medium"
-    section: str = Field(description="Section name, e.g. System design")
-    follow_up_hooks: list[str] = Field(
-        default_factory=list,
-        description="Angles for follow-ups — not full scripted answers",
-    )
-    must_cover: bool = False
+    """PLAN.md Question shape — Component 1 output / Component 2 input."""
+
+    id: str
+    topic: str
+    question: str = Field(description="Exact interview question wording")
+    depth_probes: Annotated[list[DepthProbe], Field(max_length=2)] = Field(default_factory=list)
+    eval_criteria: list[str] = Field(default_factory=list)
+    difficulty: Literal["junior", "mid", "senior", "staff"] = "mid"
+    order: int = 0
 
 
 class InterviewPlan(BaseModel):
@@ -29,7 +33,7 @@ class InterviewPlan(BaseModel):
     role_summary: str = ""
     assumed_seniority: str = "mid"
     key_skills_from_jd: list[str] = Field(default_factory=list)
-    sections: list[str] = Field(default_factory=list)
+    sections: list[str] = Field(default_factory=list, description="Optional UX grouping from generator")
     questions: list[PlanQuestion] = Field(default_factory=list)
 
 
@@ -38,6 +42,9 @@ class TranscriptTurn(BaseModel):
     role: Literal["interviewer", "candidate", "system"]
     text: str
     ts: float = 0.0
+    question_id: str | None = None
+    classification: Literal["ANSWER", "SKIP", "OFF_TOPIC", "CLARIFICATION", "UNKNOWN"] | None = None
+    depth_signal: Literal["STRONG", "ADEQUATE", "WEAK", "NONE"] | None = None
 
 
 class Transcript(BaseModel):

@@ -32,7 +32,10 @@ Supporting pieces:
 
 ## Real-time transport
 
-The conductor uses Groq **streaming** completions. `web_app` forwards deltas as **SSE** (`text/event-stream`) so the browser can render tokens incrementally.
+- **Text lane:** the conductor uses Groq **streaming** completions; `web_app` forwards deltas as **SSE** (`text/event-stream`).
+- **Voice lane (Groq-only audio):** the browser opens a **WebSocket** (`/ws/interview/{session_id}`). Candidate audio is transcribed with **Groq Whisper**; interviewer text is produced with the same **Llama** conductor as text mode; speech is synthesized with **Groq Orpheus** (`canopylabs/orpheus-v1-english`) in **≤200 character** chunks per API limits, streamed as base64 WAV frames to the client for playback.
+
+Central model and timeout IDs live in `src/settings.py` (single place to swap Groq models).
 
 ## Scenario handling (no mid-interview coaching)
 

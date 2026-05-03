@@ -1,6 +1,6 @@
-"""Generate InterviewPlan from job description + candidate profile (Groq only).
+"""Component 1 — Question set from JD + profile (Groq JSON only).
 
-This module does not read live transcripts and does not evaluate answers.
+No interview or evaluation logic. Output matches PLAN.md Question contract.
 """
 
 from __future__ import annotations
@@ -11,38 +11,39 @@ from typing import Any
 
 from groq import Groq
 
-from src.config import GROQ_API_KEY, MODEL_PLAN
 from src.schemas import InterviewPlan
+from src.settings import GROQ_API_KEY, MAX_QUESTIONS_PER_SESSION, MODEL_PLAN
 
 
-_PLAN_SYSTEM = """You are an expert hiring manager and technical interviewer.
-Your job is to OUTPUT ONLY valid JSON (no markdown fences, no commentary) matching this shape:
-{
+_PLAN_SYSTEM = f"""You are an expert hiring manager and technical interviewer.
+OUTPUT ONLY valid JSON (no markdown fences, no commentary) matching this shape:
+{{
   "version": "1",
   "role_title": string,
   "role_summary": string (2-4 sentences),
   "assumed_seniority": "junior" | "mid" | "senior" | "staff",
   "key_skills_from_jd": string[] (5-12 items),
-  "sections": string[] (ordered section headers),
+  "sections": string[] (optional section headers for UX),
   "questions": [
-    {
+    {{
       "id": "q-1",
-      "stem": string (clear interview question),
-      "intent": string (what you are testing),
-      "difficulty": "easy" | "medium" | "hard",
-      "section": string (must match one of sections),
-      "follow_up_hooks": string[] (2-4 short probe ideas, NOT answers),
-      "must_cover": boolean
-    }
+      "topic": string (short topic label, e.g. \"API design\"),
+      "question": string (exact interview question wording),
+      "depth_probes": [{{"probe": string, "listen_for": string}}],
+      "eval_criteria": string[] (signals for later evaluation),
+      "difficulty": "junior" | "mid" | "senior" | "staff",
+      "order": 1
+    }}
   ]
-}
+}}
 
 Rules:
-- Produce 10-14 questions total, spread across sections (systems, coding/problem-solving, role-specific depth, collaboration/ownership as appropriate).
-- Tailor difficulty and topics to the CANDIDATE PROFILE (their background) and the JOB DESCRIPTION.
-- Questions must be fair, professional, and free of trick trivia unless the JD emphasizes it.
-- follow_up_hooks must be probe angles only — never hints or solutions.
-- Use ids q-1, q-2, ... in order.
+- Produce 6-{MAX_QUESTIONS_PER_SESSION} questions, strictly increasing order starting at 1.
+- At most 2 depth_probes per question; probes are follow-up questions only — NEVER hints or answers.
+- listen_for is an internal rubric phrase (what a strong answer might mention) — not shown to candidate as a checklist.
+- Tailor topics and difficulty to the candidate profile and JD.
+- eval_criteria must be short observable signals (no solution leakage).
+- Questions must be fair and professional.
 """
 
 
@@ -85,4 +86,6 @@ def generate_interview_plan(
     )
     raw = (completion.choices[0].message.content or "").strip()
     data = _extract_json_object(raw)
-    return InterviewPlan.model_validate(data)
+    plan = InterviewPlan.model_validate(data)
+    plan.questions.sort(key=lambda q: q.order)
+    return plan

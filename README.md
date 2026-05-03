@@ -22,6 +22,15 @@ Open **http://127.0.0.1:8840**
 
 You can also paste a Groq key in the UI (optional); it is sent only to your local server and then to Groq — do not expose this app publicly without authentication.
 
+### Voice + face interview (Groq Whisper + Orpheus)
+
+1. On the plan screen, choose **Start as: Voice + face** (voice-first skips the text SSE opening).
+2. After the session starts, allow **camera + microphone**, then **Connect voice**.
+3. **Hold to speak** — release to send audio; Groq **Whisper** transcribes it, **Llama** generates the interviewer reply, **Orpheus** reads it aloud (WAV chunks over WebSocket).
+4. **Next (voice)** advances the planned question on the voice lane. Text controls (Send / Next) still work if you switch back mentally — hide the text box when using voice-only flow.
+
+Requires **HTTPS or localhost** for `getUserMedia` in most browsers.
+
 ## Two demo roles (fixtures)
 
 | Role | Fixture files |

@@ -5,6 +5,8 @@ The conductor LLM receives these strings as context; behavior stays testable wit
 
 from __future__ import annotations
 
+from src.settings import MAX_FOLLOW_UPS
+
 
 def policy_prefix_for_event(event: str) -> str:
     if event == "silence":
@@ -29,8 +31,9 @@ def policy_prefix_for_event(event: str) -> str:
     return ""
 
 
-def should_nudge_wrap(followups_on_current: int, max_followups: int = 5) -> str:
-    if followups_on_current < max_followups:
+def should_nudge_wrap(followups_on_current: int, max_followups: int | None = None) -> str:
+    cap = max_followups if max_followups is not None else MAX_FOLLOW_UPS
+    if followups_on_current < cap:
         return ""
     return (
         "[Guidance: You have already probed this question several times. "

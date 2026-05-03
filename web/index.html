@@ -170,13 +170,46 @@
     .comp { border: 1px solid var(--border); border-radius: 10px; padding: .75rem .8rem; margin-top: .55rem; }
     .comp h4 { margin: 0 0 .35rem; font-size: .95rem; }
     .ev { font-family: "JetBrains Mono", monospace; font-size: .76rem; color: #cbd5e1; border-left: 3px solid var(--accent2); padding: .35rem .5rem; margin: .35rem 0 0; background: rgba(0,0,0,.2); }
+    .mode-tabs { display: flex; gap: .35rem; margin-bottom: .65rem; flex-wrap: wrap; }
+    .mode-tabs button { opacity: .75; }
+    .mode-tabs button.on { opacity: 1; border-color: rgba(94,234,212,.45); background: rgba(94,234,212,.1); }
+    .face-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-bottom: .75rem; }
+    @media (max-width: 720px) { .face-grid { grid-template-columns: 1fr; } }
+    .vwin {
+      border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+      background: var(--bg2); min-height: 200px; position: relative;
+    }
+    .vwin video { width: 100%; height: 220px; object-fit: cover; display: block; background: #000; }
+    .vwin span.label {
+      position: absolute; left: .5rem; top: .5rem; font-size: .72rem; font-weight: 700;
+      background: rgba(0,0,0,.55); padding: .2rem .45rem; border-radius: 6px;
+    }
+    .iv-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 1rem; }
+    .orb {
+      width: 120px; height: 120px; border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, rgba(94,234,212,.5), rgba(56,189,248,.15) 50%, transparent 70%);
+      border: 2px solid rgba(94,234,212,.35);
+      box-shadow: 0 0 40px rgba(56,189,248,.2);
+      transition: transform .15s ease, box-shadow .2s;
+    }
+    .orb.speaking {
+      animation: pulseOrb 1.1s ease-in-out infinite;
+      box-shadow: 0 0 55px rgba(94,234,212,.45);
+    }
+    @keyframes pulseOrb {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.06); }
+    }
+    #ivCaption { margin-top: .5rem; font-size: .82rem; color: var(--muted); text-align: center; max-height: 120px; overflow-y: auto; width: 100%; }
+    #btnPTT { user-select: none; min-width: 140px; }
+    #btnPTT.active { border-color: var(--accent); background: rgba(94,234,212,.15); }
   </style>
 </head>
 <body>
   <header>
     <div class="wrap">
       <h1>Technical Interview Agent</h1>
-      <div class="sub">Tailored questions · Live Groq interview · Structured evaluation with transcript citations</div>
+      <div class="sub">Groq Llama + Whisper + Orpheus TTS · Voice WebSocket · Structured evaluation</div>
     </div>
   </header>
   <main class="wrap">
@@ -223,6 +256,11 @@
           <h2>Interview plan</h2>
           <p class="sub" style="margin:0 0 .75rem" id="planMeta"></p>
           <div class="plan-list" id="planList"></div>
+          <div class="mode-tabs" id="modeTabs" style="margin-top:.75rem">
+            <button type="button" class="ghost on" data-mode="text">Start as: Text</button>
+            <button type="button" class="ghost" data-mode="voice">Start as: Voice + face</button>
+          </div>
+          <p class="sub" style="margin:.35rem 0 0">Voice-first skips the browser text opening; connect voice on the next screen to hear Groq Orpheus ask the first question.</p>
           <div class="row" style="margin-top:.85rem">
             <button type="button" class="primary" id="btnStart">Start interview session</button>
             <button type="button" class="ghost" id="btnBack1">Edit inputs</button>
@@ -247,9 +285,34 @@
             <button type="button" class="ghost" id="btnNextQ">Next question</button>
             <button type="button" class="primary" id="btnToEval">Evaluate</button>
           </div>
+          <div id="voicePanel" style="display:none">
+            <p style="font-size:.82rem;color:var(--muted);margin:0 0 .5rem">
+              Connect the voice lane after starting the session. <b>Hold to speak</b> — your audio is sent to Groq Whisper; the interviewer replies with Groq Orpheus speech. Allow camera + mic when prompted.
+            </p>
+            <div class="face-grid">
+              <div class="vwin">
+                <span class="label">You</span>
+                <video id="selfCam" playsinline muted autoplay></video>
+              </div>
+              <div class="vwin iv-panel">
+                <span class="label">Interviewer</span>
+                <div class="orb" id="orb" aria-hidden="true"></div>
+                <div id="ivCaption"></div>
+              </div>
+            </div>
+            <div class="row">
+              <button type="button" class="primary" id="btnConnectVoice">Connect voice</button>
+              <button type="button" class="ghost" id="btnDisconnectVoice" disabled>Disconnect</button>
+              <button type="button" class="ghost" id="btnWsNext" disabled>Next (voice)</button>
+            </div>
+            <p class="typing" id="voiceStatus" style="display:block;margin:.5rem 0">Voice lane disconnected.</p>
+            <div class="row">
+              <button type="button" class="primary" id="btnPTT" disabled>Hold to speak</button>
+            </div>
+          </div>
           <div class="chat" id="chat"></div>
           <div class="typing" id="typing" style="display:none">Interviewer is typing…</div>
-          <div style="margin-top:.75rem">
+          <div id="textAnswerBlock" style="margin-top:.75rem">
             <label>Your answer</label>
             <textarea id="answer" style="min-height:88px"></textarea>
             <div class="row">
@@ -302,6 +365,221 @@
     let planJson = null;
     let sessionId = null;
     let pendingEvent = "normal";
+    let interviewMode = "text";
+    let voiceWs = null;
+    let camStream = null;
+    let mediaRecorder = null;
+    let recChunks = [];
+    let audioCtx = null;
+    let ttsQueue = Promise.resolve();
+
+    function wsUrl(path) {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      return proto + "://" + location.host + path;
+    }
+
+    function setInterviewMode(mode) {
+      interviewMode = mode;
+      document.querySelectorAll("#modeTabs button").forEach((b) => {
+        b.classList.toggle("on", b.getAttribute("data-mode") === mode);
+      });
+      const voiceOn = mode === "voice";
+      $("voicePanel").style.display = voiceOn ? "block" : "none";
+      $("textAnswerBlock").style.display = voiceOn ? "none" : "";
+    }
+    document.querySelectorAll("#modeTabs button").forEach((btn) => {
+      btn.onclick = () => setInterviewMode(btn.getAttribute("data-mode"));
+    });
+
+    function blobToBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onloadend = () => {
+          const s = String(r.result || "");
+          const i = s.indexOf(",");
+          resolve(i >= 0 ? s.slice(i + 1) : s);
+        };
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(blob);
+      });
+    }
+
+    function pickRecMime() {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+        return "audio/webm;codecs=opus";
+      }
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported("audio/webm")) return "audio/webm";
+      return "";
+    }
+
+    async function playTtsWavBase64(b64) {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") await audioCtx.resume();
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const copy = arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength);
+      const buf = await audioCtx.decodeAudioData(copy);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(audioCtx.destination);
+      $("orb").classList.add("speaking");
+      await new Promise((res) => {
+        src.onended = () => res();
+        src.start(0);
+      });
+    }
+
+    function enqueueTts(b64) {
+      ttsQueue = ttsQueue
+        .then(() => playTtsWavBase64(b64))
+        .catch((e) => {
+          $("voiceStatus").textContent = "Audio playback error: " + (e.message || e);
+        });
+    }
+
+    async function ensureCamMic() {
+      if (camStream) return;
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+      $("selfCam").srcObject = camStream;
+    }
+
+    function stopVoiceLane() {
+      if (voiceWs) {
+        try {
+          voiceWs.close();
+        } catch (_) {}
+        voiceWs = null;
+      }
+      $("btnDisconnectVoice").disabled = true;
+      $("btnPTT").disabled = true;
+      $("btnWsNext").disabled = true;
+      $("voiceStatus").textContent = "Voice lane disconnected.";
+      $("btnPTT").classList.remove("active");
+    }
+
+    $("btnConnectVoice").onclick = async () => {
+      if (!sessionId) return;
+      $("err3").style.display = "none";
+      try {
+        await ensureCamMic();
+        stopVoiceLane();
+        const url = wsUrl("/ws/interview/" + encodeURIComponent(sessionId));
+        $("voiceStatus").textContent = "Connecting to " + url + " …";
+        voiceWs = new WebSocket(url);
+        voiceWs.onopen = () => {
+          $("voiceStatus").textContent = "Voice lane connected. Hold to speak after the interviewer finishes.";
+          $("btnDisconnectVoice").disabled = false;
+          $("btnPTT").disabled = false;
+          $("btnWsNext").disabled = false;
+        };
+        voiceWs.onmessage = async (ev) => {
+          let msg = {};
+          try {
+            msg = JSON.parse(ev.data);
+          } catch (_) {
+            return;
+          }
+          if (msg.type === "ready") {
+            $("voiceStatus").textContent = "Session ready on voice lane.";
+          }
+          if (msg.type === "candidate_text" && msg.text) {
+            renderTurn({ role: "candidate", text: msg.text });
+          }
+          if (msg.type === "interviewer_text" && msg.text) {
+            renderTurn({ role: "interviewer", text: msg.text });
+            $("ivCaption").textContent = msg.text;
+          }
+          if (msg.type === "tts_chunk" && msg.b64) {
+            enqueueTts(msg.b64);
+          }
+          if (msg.type === "turn_done") {
+            ttsQueue = ttsQueue.then(() => {
+              $("orb").classList.remove("speaking");
+            });
+          }
+          if (msg.type === "timer") {
+            $("voiceStatus").textContent = "Question timer: time limit signal sent — you can still answer or clarify.";
+          }
+          if (msg.type === "error") {
+            $("voiceStatus").textContent = "Error: " + (msg.detail || JSON.stringify(msg));
+          }
+        };
+        voiceWs.onclose = () => {
+          $("voiceStatus").textContent = "Voice lane closed.";
+          $("btnDisconnectVoice").disabled = true;
+          $("btnPTT").disabled = true;
+          $("btnWsNext").disabled = true;
+        };
+        voiceWs.onerror = () => {
+          $("voiceStatus").textContent = "WebSocket error.";
+        };
+      } catch (e) {
+        $("err3").textContent = e.message || String(e);
+        $("err3").style.display = "";
+        $("voiceStatus").textContent = "Could not access camera/mic or open WebSocket.";
+      }
+    };
+
+    $("btnDisconnectVoice").onclick = () => {
+      stopVoiceLane();
+    };
+
+    $("btnWsNext").onclick = () => {
+      if (voiceWs && voiceWs.readyState === 1) {
+        voiceWs.send(JSON.stringify({ type: "advance_question" }));
+      }
+    };
+
+    const pttDown = async (e) => {
+      e.preventDefault();
+      if (!voiceWs || voiceWs.readyState !== 1) return;
+      if (!camStream) return;
+      if (mediaRecorder && mediaRecorder.state === "recording") return;
+      const mime = pickRecMime();
+      recChunks = [];
+      try {
+        mediaRecorder = mime
+          ? new MediaRecorder(camStream, { mimeType: mime })
+          : new MediaRecorder(camStream);
+      } catch (_) {
+        mediaRecorder = new MediaRecorder(camStream);
+      }
+      mediaRecorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) recChunks.push(ev.data);
+      };
+      mediaRecorder.onstop = async () => {
+        $("btnPTT").classList.remove("active");
+        $("voiceStatus").textContent = "Transcribing with Groq Whisper…";
+        const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+        recChunks = [];
+        if (!voiceWs || voiceWs.readyState !== 1 || blob.size < 200) {
+          $("voiceStatus").textContent = "Recording too short — hold longer.";
+          return;
+        }
+        const b64 = await blobToBase64(blob);
+        voiceWs.send(JSON.stringify({ type: "audio_webm", b64 }));
+      };
+      mediaRecorder.start(100);
+      $("btnPTT").classList.add("active");
+      $("voiceStatus").textContent = "Recording… release to send.";
+    };
+
+    const pttUp = (e) => {
+      e.preventDefault();
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+      }
+    };
+
+    $("btnPTT").addEventListener("mousedown", pttDown);
+    $("btnPTT").addEventListener("mouseup", pttUp);
+    $("btnPTT").addEventListener("mouseleave", pttUp);
+    $("btnPTT").addEventListener("touchstart", pttDown, { passive: false });
+    $("btnPTT").addEventListener("touchend", pttUp);
 
     function setStep(n) {
       document.querySelectorAll(".step").forEach((s) => {
@@ -352,7 +630,7 @@
         (t.questions || []).forEach((q) => {
           const d = document.createElement("div");
           d.className = "pq";
-          d.innerHTML = `<b>${q.id}</b> · ${q.section}<br/>${escapeHtml(q.stem)}`;
+          d.innerHTML = `<b>${q.id}</b> · ${escapeHtml(q.topic || "")}<br/>${escapeHtml(q.question || "")}`;
           list.appendChild(d);
         });
         show($("screen1"), false);
@@ -447,12 +725,16 @@
         show($("screen3"), true);
         setStep("3");
         pendingEvent = "normal";
-        await streamChat({
-          session_id: sessionId,
-          message: "",
-          event_type: "normal",
-          action: "opening",
-        });
+        if (interviewMode !== "voice") {
+          await streamChat({
+            session_id: sessionId,
+            message: "",
+            event_type: "normal",
+            action: "opening",
+          });
+        } else {
+          $("voiceStatus").textContent = "Session started — switch stays on Voice, then tap Connect voice for opening audio.";
+        }
         await refreshMeta();
       } catch (e) {
         $("err2").textContent = e.message || String(e);
@@ -604,6 +886,11 @@
       setStep("3");
     };
     $("btnEvalRestart").onclick = () => {
+      stopVoiceLane();
+      if (camStream) {
+        camStream.getTracks().forEach((t) => t.stop());
+        camStream = null;
+      }
       show($("screen4"), false);
       show($("screen3"), false);
       show($("screen2"), false);
@@ -612,6 +899,7 @@
       sessionId = null;
       planJson = null;
       $("chat").innerHTML = "";
+      setInterviewMode("text");
     };
 
     $("btnToEval").onclick = async () => {

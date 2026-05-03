@@ -1,16 +1,18 @@
-"""Environment-driven settings for Groq models and API key."""
+"""Backward-compatible re-exports — prefer `src.settings` for new code."""
 
-from __future__ import annotations
-
-import os
-from pathlib import Path
-
-from dotenv import load_dotenv
-
-_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(_ROOT / ".env")
-
-GROQ_API_KEY: str = (os.getenv("GROQ_API_KEY") or "").strip()
-MODEL_PLAN: str = os.getenv("GROQ_MODEL_PLAN", "llama-3.3-70b-versatile").strip()
-MODEL_INTERVIEW: str = os.getenv("GROQ_MODEL_INTERVIEW", "llama-3.3-70b-versatile").strip()
-MODEL_EVAL: str = os.getenv("GROQ_MODEL_EVAL", "llama-3.3-70b-versatile").strip()
+from src.settings import (  # noqa: F401
+    APP_NAME,
+    GROQ_API_KEY,
+    MAX_FOLLOW_UPS,
+    MAX_QUESTIONS_PER_SESSION,
+    MAX_RETRIES_OFF_TOPIC,
+    MODEL_EVAL,
+    MODEL_INTERVIEW,
+    MODEL_PLAN,
+    MODEL_TTS,
+    MODEL_WHISPER,
+    ORPHEUS_MAX_INPUT_CHARS,
+    ORPHEUS_VOICE,
+    QUESTION_TIMEOUT_SECONDS,
+    SILENCE_THRESHOLD_SECONDS,
+)

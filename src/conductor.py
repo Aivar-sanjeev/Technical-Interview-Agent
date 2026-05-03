@@ -1,6 +1,6 @@
-"""Real-time interview conductor (Groq streaming only).
+"""Component 2 — Live interviewer text (Groq streaming only).
 
-Does not generate the initial question set and does not produce final evaluations.
+Does not transcribe audio, synthesize speech, or score answers.
 """
 
 from __future__ import annotations
@@ -10,48 +10,57 @@ from collections.abc import Iterator
 
 from groq import Groq
 
-from src.config import GROQ_API_KEY, MODEL_INTERVIEW
 from src.policies import policy_prefix_for_event, should_nudge_wrap
 from src.schemas import InterviewPlan, Transcript, TranscriptTurn
+from src.settings import GROQ_API_KEY, MAX_FOLLOW_UPS, MODEL_INTERVIEW
 
 
-_CONDUCTOR_SYSTEM = """You are a senior technical interviewer conducting a live interview.
+_CONDUCTOR_SYSTEM = """You are a senior technical interviewer conducting a live voice interview.
 
 Goals:
-- Sound human, concise, and conversational (not a form or checklist read aloud).
-- Ask the active question, listen, then choose appropriate follow-ups: go deeper on strong answers; help clarify scope on vague answers; do not lecture.
-- You may rephrase or scope the question if the candidate asks for clarification.
-- Never reveal or hint at a "correct" answer, algorithm, or solution sketch. Do not name specific design choices they "should" pick.
-- Never coach the candidate toward an answer (no "you might want to mention X" where X is content of the solution).
+- Sound human, concise, and conversational. Prefer short spoken sentences.
+- Ask the active question, listen, then choose follow-ups using depth_probes when appropriate.
+- If the candidate asks to clarify: rephrase or narrow scope only — no teaching or partial solutions.
+- Never hint at a correct answer, algorithm steps, or what they "should" say.
+- Never coach toward content (no "you might want to mention X" where X reveals the answer).
 
-Style:
-- Short paragraphs; prefer one question at a time.
-- If the candidate is stuck, you may offer to move to another angle or the next topic — without solving the problem.
+Classification awareness (do not read labels aloud):
+- If they are off-topic: redirect once politely, then offer to move on.
+- If they are silent or stuck: encourage thinking aloud or clarifying the question wording only.
 
-You will receive JSON describing the interview plan excerpt, transcript, active question, and optional situation notes. Respond as the interviewer only.
+If interaction is \"opening\", greet briefly then ask the active question clearly.
 
-If the field interaction is \"opening\", you are either starting the interview or transitioning to a new main question: greet briefly (if appropriate), then ask the active question clearly — do not invent that the candidate already answered it."""
+If you receive a system note about [TIME_LIMIT_REACHED], acknowledge briefly and transition to the next question angle without solving anything."""
 
 
 def _serialize_transcript(tr: Transcript, max_turns: int = 24) -> str:
     tail = tr.turns[-max_turns:] if len(tr.turns) > max_turns else tr.turns
     lines = []
     for t in tail:
-        lines.append({"id": t.id, "role": t.role, "text": t.text})
+        lines.append(
+            {
+                "id": t.id,
+                "role": t.role,
+                "text": t.text,
+                "classification": t.classification,
+                "depth_signal": t.depth_signal,
+            }
+        )
     return json.dumps(lines, ensure_ascii=False)
 
 
 def _active_question(plan: InterviewPlan, q_index: int) -> dict:
     if q_index < 0 or q_index >= len(plan.questions):
-        return {"error": "no_more_questions", "stem": "", "intent": "", "hooks": []}
+        return {"error": "no_more_questions"}
     q = plan.questions[q_index]
     return {
         "id": q.id,
-        "stem": q.stem,
-        "intent": q.intent,
+        "topic": q.topic,
+        "question": q.question,
+        "depth_probes": [p.model_dump() for p in q.depth_probes],
+        "eval_criteria": q.eval_criteria,
         "difficulty": q.difficulty,
-        "section": q.section,
-        "follow_up_hooks": q.follow_up_hooks,
+        "order": q.order,
     }
 
 
@@ -66,7 +75,7 @@ def build_user_payload(
     interaction: str = "continue",
 ) -> str:
     prefix = policy_prefix_for_event(event_type)
-    prefix += should_nudge_wrap(followups_on_current)
+    prefix += should_nudge_wrap(followups_on_current, MAX_FOLLOW_UPS)
     payload = {
         "role_title": plan.role_title,
         "role_summary": plan.role_summary,
@@ -130,11 +139,10 @@ def stream_interviewer_reply(
 
 
 def opening_message(plan: InterviewPlan, q_index: int) -> str:
-    """Non-streamed fallback (unused if streaming opening)."""
     q = plan.questions[q_index]
     return (
         f"Hi — thanks for joining. I'm interviewing for {plan.role_title or 'this role'}. "
-        f"Let's start with: {q.stem}"
+        f"Let's start with: {q.question}"
     )
 
 
