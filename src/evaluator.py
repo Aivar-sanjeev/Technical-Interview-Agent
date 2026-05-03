@@ -1,17 +1,14 @@
-"""Post-session structured evaluation (Groq only).
-
-Consumes transcript + plan + role context. Does not conduct the interview.
-"""
+"""Post-session structured evaluation (NVIDIA NIM, OpenAI-compatible chat)."""
 
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
-from groq import Groq
+from openai import OpenAI
 
-from src.settings import GROQ_API_KEY, MODEL_EVAL
+from src.question_generator import _extract_json_object
+from src.settings import NVIDIA_API_KEY, NVIDIA_EVAL_MODEL, NVIDIA_INFERENCE_BASE_URL
 from src.schemas import EvaluationReport, InterviewPlan, Transcript
 
 
@@ -45,19 +42,6 @@ Rules:
 - Do not invent candidate statements; quotes must appear in the transcript.
 - Do not coach or rewrite the interview; evaluate only.
 """
-
-
-def _extract_json_object(text: str) -> dict[str, Any]:
-    text = text.strip()
-    if "```" in text:
-        parts = re.findall(r"```(?:json)?\s*([\s\S]*?)```", text, flags=re.I)
-        if parts:
-            text = parts[0].strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError("Model did not return a JSON object.")
-    return json.loads(text[start : end + 1])
 
 
 def _candidate_corpus(transcript: Transcript) -> dict[str, str]:
@@ -105,12 +89,12 @@ def evaluate_interview(
     api_key: str | None = None,
     model: str | None = None,
 ) -> EvaluationReport:
-    key = (api_key or GROQ_API_KEY).strip()
+    key = (api_key or NVIDIA_API_KEY).strip()
     if not key:
-        raise ValueError("GROQ_API_KEY is not set.")
+        raise ValueError("NVIDIA_API_KEY is not set.")
 
-    client = Groq(api_key=key)
-    use_model = (model or MODEL_EVAL).strip()
+    client = OpenAI(base_url=NVIDIA_INFERENCE_BASE_URL.rstrip("/"), api_key=key)
+    use_model = (model or NVIDIA_EVAL_MODEL).strip()
 
     payload = {
         "job_description": job_description.strip(),
@@ -123,12 +107,20 @@ def evaluate_interview(
     completion = client.chat.completions.create(
         model=use_model,
         temperature=0.2,
+        max_tokens=8192,
         messages=[
             {"role": "system", "content": _EVAL_SYSTEM},
             {"role": "user", "content": user},
         ],
     )
-    raw = (completion.choices[0].message.content or "").strip()
+    choice = completion.choices[0].message
+    raw = (getattr(choice, "content", None) or "").strip()
+    if not raw:
+        reasoning = getattr(choice, "reasoning_content", None) or getattr(choice, "reasoning", None)
+        if reasoning:
+            raw = str(reasoning).strip()
+    if not raw:
+        raise ValueError("NVIDIA model returned empty content for evaluation.")
     data = _extract_json_object(raw)
     return EvaluationReport.model_validate(data)
 
@@ -156,9 +148,9 @@ def evaluate_with_repair(
     if not issues or max_repairs <= 0:
         return report, issues
 
-    key = (api_key or GROQ_API_KEY).strip()
-    client = Groq(api_key=key)
-    use_model = (model or MODEL_EVAL).strip()
+    key = (api_key or NVIDIA_API_KEY).strip()
+    client = OpenAI(base_url=NVIDIA_INFERENCE_BASE_URL.rstrip("/"), api_key=key)
+    use_model = (model or NVIDIA_EVAL_MODEL).strip()
     repair_user = json.dumps(
         {
             "previous_json": report.model_dump(),
@@ -171,12 +163,20 @@ def evaluate_with_repair(
     completion = client.chat.completions.create(
         model=use_model,
         temperature=0.1,
+        max_tokens=8192,
         messages=[
             {"role": "system", "content": _EVAL_SYSTEM},
             {"role": "user", "content": repair_user},
         ],
     )
-    raw = (completion.choices[0].message.content or "").strip()
+    choice = completion.choices[0].message
+    raw = (getattr(choice, "content", None) or "").strip()
+    if not raw:
+        reasoning = getattr(choice, "reasoning_content", None) or getattr(choice, "reasoning", None)
+        if reasoning:
+            raw = str(reasoning).strip()
+    if not raw:
+        return report, issues
     data = _extract_json_object(raw)
     report2 = EvaluationReport.model_validate(data)
     issues2 = validate_report_against_transcript(report2, transcript)

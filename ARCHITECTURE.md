@@ -1,6 +1,6 @@
 # Architecture: separating plan, conduct, and evaluate
 
-This project satisfies the requirement that **question generation**, **interview conduct**, and **evaluation** are separable: each has its own module, prompts, and Groq model settings. They communicate only through **shared contracts** (`src/schemas.py`), not by calling each other’s internals.
+This project satisfies the requirement that **question generation**, **interview conduct**, and **evaluation** are separable: each has its own module, prompts, and **NVIDIA NIM** model settings (`NVIDIA_PLAN_MODEL`, `NVIDIA_INTERVIEW_MODEL`, `NVIDIA_EVAL_MODEL`). They communicate only through **shared contracts** (`src/schemas.py`), not by calling each other’s internals.
 
 ## Component map
 
@@ -13,13 +13,13 @@ This project satisfies the requirement that **question generation**, **interview
 Supporting pieces:
 
 - **`src/schemas.py`** — Pydantic models used by all three layers (`InterviewPlan`, `Transcript`, `EvaluationReport`, etc.). Changing evaluation shape does not force changes to the conductor unless you intentionally extend the API contract.
-- **`src/config.py`** — API key and **separate model env vars** (`GROQ_MODEL_PLAN`, `GROQ_MODEL_INTERVIEW`, `GROQ_MODEL_EVAL`) so you can swap models per phase without code changes.
+- **`src/config.py`** / **`src/settings.py`** — `NVIDIA_API_KEY` and separate **NVIDIA_*_MODEL** env vars so you can swap models per phase without code changes.
 - **`web_app.py`** — HTTP orchestration only: sessions, SSE streaming, and calling into the three modules. It is not the “business logic” for scoring or questioning.
 
 ## Why this separation matters
 
 1. **Swap or retrain one concern** — e.g. replace `evaluator.py` with a rules engine + LLM hybrid without touching `question_generator.py`.
-2. **Test policies without Groq** — `policies.py` is pure string context; unit tests can assert prefixes for silence / clarify / off-topic without API calls.
+2. **Test policies without any LLM** — `policies.py` is pure string context; unit tests can assert prefixes for silence / clarify / off-topic without API calls.
 3. **Avoid coaching leakage** — the conductor system prompt is isolated from the evaluator; the evaluator never runs mid-interview.
 4. **Evidence-grounded reports** — `evaluator.validate_report_against_transcript` checks that quotes appear in candidate text; a repair pass can ask the model to fix only evidence fields.
 
@@ -32,10 +32,10 @@ Supporting pieces:
 
 ## Real-time transport
 
-- **Text lane:** the conductor uses Groq **streaming** completions; `web_app` forwards deltas as **SSE** (`text/event-stream`).
-- **Voice lane (Groq-only audio):** the browser opens a **WebSocket** (`/ws/interview/{session_id}`). Candidate audio is transcribed with **Groq Whisper**; interviewer text is produced with the same **Llama** conductor as text mode; speech is synthesized with **Groq Orpheus** (`canopylabs/orpheus-v1-english`) in **≤200 character** chunks per API limits, streamed as base64 WAV frames to the client for playback.
+- **Text lane:** the conductor uses **NVIDIA NIM** OpenAI-compatible **streaming** chat; `web_app` forwards deltas as **SSE** (`text/event-stream`).
+- **Voice lane:** the browser opens a **WebSocket** (`/ws/interview/{session_id}`). Candidate audio is transcribed with **Nemotron ASR streaming** (Riva gRPC); interviewer text uses the same **NVIDIA** conductor as text mode; interviewer speech is played via the browser **`SpeechSynthesis`** API (`tts_browser` message), not cloud WAV streaming.
 
-Central model and timeout IDs live in `src/settings.py` (single place to swap Groq models).
+Central keys and model IDs live in `src/settings.py`.
 
 ## Scenario handling (no mid-interview coaching)
 

@@ -1,7 +1,4 @@
-"""Single source of truth for model IDs and interview timing (Groq-only stack).
-
-Aligned with PLAN.md — swap models here only.
-"""
+"""Single source of truth for NVIDIA NIM / Riva settings and interview timing."""
 
 from __future__ import annotations
 
@@ -13,19 +10,27 @@ from dotenv import load_dotenv
 _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env")
 
-# API
-GROQ_API_KEY: str = (os.getenv("GROQ_API_KEY") or "").strip()
+# NVIDIA API key (integrate.api.nvidia.com + Riva ASR metadata)
+NVIDIA_API_KEY: str = (os.getenv("NVIDIA_API_KEY") or "").strip()
 
-# ── Groq model IDs ─────────────────────────────────────────────
-MODEL_PLAN: str = os.getenv("GROQ_MODEL_PLAN", "llama-3.3-70b-versatile").strip()
-MODEL_INTERVIEW: str = os.getenv("GROQ_MODEL_INTERVIEW", "llama-3.3-70b-versatile").strip()
-MODEL_EVAL: str = os.getenv("GROQ_MODEL_EVAL", "llama-3.3-70b-versatile").strip()
-MODEL_WHISPER: str = os.getenv("GROQ_MODEL_WHISPER", "whisper-large-v3").strip()
-MODEL_TTS: str = os.getenv("GROQ_MODEL_TTS", "canopylabs/orpheus-v1-english").strip()
-ORPHEUS_VOICE: str = os.getenv("GROQ_ORPHEUS_VOICE", "troy").strip()
-ORPHEUS_MAX_INPUT_CHARS: int = int(os.getenv("GROQ_ORPHEUS_MAX_CHARS", "200"))
+# Speech-to-text: Nemotron ASR streaming (Riva gRPC) only.
+NVIDIA_ASR_FUNCTION_ID: str = (
+    os.getenv("NVIDIA_ASR_FUNCTION_ID") or "bb0837de-8c7b-481f-9ec8-ef5663e9c1fa"
+).strip()
+NVIDIA_ASR_GRPC_URI: str = (os.getenv("NVIDIA_ASR_GRPC_URI") or "grpc.nvcf.nvidia.com:443").strip()
+NVIDIA_ASR_MODEL: str = (os.getenv("NVIDIA_ASR_MODEL") or "").strip()
 
-# ── Interview timing (PLAN.md) ─────────────────────────────────
+# OpenAI-compatible chat at NVIDIA NIM
+NVIDIA_INFERENCE_BASE_URL: str = (
+    os.getenv("NVIDIA_INFERENCE_BASE_URL") or "https://integrate.api.nvidia.com/v1"
+).strip()
+NVIDIA_PLAN_MODEL: str = (os.getenv("NVIDIA_PLAN_MODEL") or "openai/gpt-oss-20b").strip()
+NVIDIA_INTERVIEW_MODEL: str = (os.getenv("NVIDIA_INTERVIEW_MODEL") or "openai/gpt-oss-20b").strip()
+NVIDIA_EVAL_MODEL: str = (os.getenv("NVIDIA_EVAL_MODEL") or "openai/gpt-oss-20b").strip()
+
+PLAN_MAX_JD_CHARS: int = int(os.getenv("PLAN_MAX_JD_CHARS", "6000"))
+PLAN_MAX_PROFILE_CHARS: int = int(os.getenv("PLAN_MAX_PROFILE_CHARS", "4500"))
+
 QUESTION_TIMEOUT_SECONDS: int = int(os.getenv("QUESTION_TIMEOUT_SECONDS", "120"))
 SILENCE_THRESHOLD_SECONDS: float = float(os.getenv("SILENCE_THRESHOLD_SECONDS", "4"))
 MAX_FOLLOW_UPS: int = int(os.getenv("MAX_FOLLOW_UPS", "2"))
@@ -34,7 +39,5 @@ MAX_QUESTIONS_PER_SESSION: int = int(os.getenv("MAX_QUESTIONS_PER_SESSION", "12"
 
 APP_NAME: str = os.getenv("APP_NAME", "TechInterviewAgent").strip()
 
-# Voice lane: after interviewer audio finishes, wait for candidate speech (browser auto-sends).
-# Stage 1 — soft nudge (LLM + TTS). Stage 2 — auto-advance to next planned question if still silent.
-VOICE_SILENCE_NUDGE_SECONDS: float = float(os.getenv("VOICE_SILENCE_NUDGE_SECONDS", "12"))
-VOICE_SILENCE_SKIP_SECONDS: float = float(os.getenv("VOICE_SILENCE_SKIP_SECONDS", "16"))
+VOICE_SILENCE_NUDGE_SECONDS: float = float(os.getenv("VOICE_SILENCE_NUDGE_SECONDS", "22"))
+VOICE_SILENCE_SKIP_SECONDS: float = float(os.getenv("VOICE_SILENCE_SKIP_SECONDS", "28"))

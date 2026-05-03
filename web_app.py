@@ -31,13 +31,18 @@ from src.evaluator import evaluate_with_repair
 from src.question_generator import generate_interview_plan
 from src.schemas import InterviewPlan, Transcript, TranscriptTurn
 from src.settings import (
-    GROQ_API_KEY,
+    NVIDIA_API_KEY,
     QUESTION_TIMEOUT_SECONDS,
     VOICE_SILENCE_NUDGE_SECONDS,
     VOICE_SILENCE_SKIP_SECONDS,
 )
-from src.stt_groq import transcribe_audio_bytes
-from src.tts_groq import synthesize_speech_wav_chunks
+from src.api_errors import (
+    api_http_detail,
+    api_ws_detail,
+    is_api_payload_too_large,
+    is_api_rate_limit,
+)
+from src.stt import transcribe_audio_bytes
 
 app = FastAPI(title="Technical Interview Agent", version="0.4.0")
 app.mount("/fixtures", StaticFiles(directory=str(_ROOT / "fixtures")), name="fixtures")
@@ -67,19 +72,19 @@ def _transcript_from_session(turns: list[dict[str, Any]]) -> Transcript:
 class PlanIn(BaseModel):
     job_description: str = Field(min_length=40)
     candidate_profile: str = Field(min_length=40)
-    groq_api_key: str | None = Field(default=None)
+    nvidia_api_key: str | None = Field(default=None)
 
 
 class SessionStartIn(BaseModel):
     plan: dict[str, Any]
-    groq_api_key: str | None = None
+    nvidia_api_key: str | None = None
 
 
 class EvaluateIn(BaseModel):
     session_id: str = Field(min_length=8)
     job_description: str = Field(min_length=40)
     candidate_profile: str = Field(min_length=40)
-    groq_api_key: str | None = None
+    nvidia_api_key: str | None = None
 
 
 class SessionChatIn(BaseModel):
@@ -148,7 +153,10 @@ def _schedule_question_timer(session_id: str, websocket: WebSocket) -> None:
                         "ts": time.time(),
                     }
                 )
-            await websocket.send_json({"type": "timer", "event": "question_timeout"})
+            try:
+                await websocket.send_json({"type": "timer", "event": "question_timeout"})
+            except Exception:
+                return
         except (WebSocketDisconnect, asyncio.CancelledError):
             return
         except Exception:
@@ -182,7 +190,10 @@ async def _voice_silence_pipeline(websocket: WebSocket, session_id: str, s: dict
                 return
             if float(sess.get("last_candidate_ts", 0)) > float(sess.get("last_interviewer_ts", 0)):
                 return
-        await websocket.send_json({"type": "silence_prompt", "stage": 1})
+        try:
+            await websocket.send_json({"type": "silence_prompt", "stage": 1})
+        except Exception:
+            return
         await _send_interviewer_voice(
             websocket,
             s,
@@ -201,7 +212,10 @@ async def _voice_silence_pipeline(websocket: WebSocket, session_id: str, s: dict
                 return
             plan: InterviewPlan = sess["plan"]
             if sess["q_index"] + 1 >= len(plan.questions):
-                await websocket.send_json({"type": "interview_complete", "detail": "end_of_plan"})
+                try:
+                    await websocket.send_json({"type": "interview_complete", "detail": "end_of_plan"})
+                except Exception:
+                    pass
                 return
             sess["q_index"] += 1
             sess["turns"].append(
@@ -212,9 +226,12 @@ async def _voice_silence_pipeline(websocket: WebSocket, session_id: str, s: dict
                     "ts": time.time(),
                 }
             )
-        await websocket.send_json(
-            {"type": "auto_advanced", "reason": "silence", "message": "Moving to the next question."}
-        )
+        try:
+            await websocket.send_json(
+                {"type": "auto_advanced", "reason": "silence", "message": "Moving to the next question."}
+            )
+        except Exception:
+            return
         await _send_interviewer_voice(
             websocket,
             s,
@@ -229,6 +246,8 @@ async def _voice_silence_pipeline(websocket: WebSocket, session_id: str, s: dict
         return
     except (WebSocketDisconnect, RuntimeError):
         return
+    except Exception:
+        return
 
 
 async def _send_interviewer_voice(
@@ -241,8 +260,8 @@ async def _send_interviewer_voice(
     interaction: str,
     schedule_silence_watchdog: bool = True,
 ) -> str:
-    """Generate interviewer text, persist, stream Orpheus WAV chunks to client. Returns full text."""
-    api_key = s.get("groq_api_key")
+    """Generate interviewer text (NVIDIA LLM), then browser TTS via `tts_browser` message. Returns full text."""
+    api_key = s.get("nvidia_api_key")
     with _SESSION_LOCK:
         plan: InterviewPlan = s["plan"]
         q_index_live = int(s["q_index"])
@@ -277,19 +296,8 @@ async def _send_interviewer_voice(
             s["turns"].append(turn)
 
     await websocket.send_json({"type": "interviewer_text", "text": full})
-
-    wavs = await asyncio.to_thread(
-        lambda: list(synthesize_speech_wav_chunks(full, api_key=api_key)),
-    )
-    for i, chunk in enumerate(wavs):
-        await websocket.send_json(
-            {
-                "type": "tts_chunk",
-                "index": i,
-                "format": "wav",
-                "b64": base64.b64encode(chunk).decode("ascii"),
-            }
-        )
+    if full:
+        await websocket.send_json({"type": "tts_browser", "text": full})
     await websocket.send_json({"type": "turn_done"})
     with _SESSION_LOCK:
         s["last_interviewer_ts"] = time.time()
@@ -312,12 +320,18 @@ async def api_plan(body: PlanIn) -> JSONResponse:
         plan = generate_interview_plan(
             body.job_description,
             body.candidate_profile,
-            api_key=body.groq_api_key,
+            nvidia_api_key=body.nvidia_api_key,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Groq error: {e!s}") from e
+        if is_api_payload_too_large(e):
+            code = 413
+        elif is_api_rate_limit(e):
+            code = 429
+        else:
+            code = 502
+        raise HTTPException(status_code=code, detail=api_http_detail(e, context="Plan")) from e
     return JSONResponse(plan.model_dump())
 
 
@@ -333,7 +347,7 @@ async def session_start(body: SessionStartIn) -> JSONResponse:
             "plan": plan,
             "turns": [],
             "q_index": 0,
-            "groq_api_key": (body.groq_api_key or "").strip() or None,
+            "nvidia_api_key": (body.nvidia_api_key or "").strip() or None,
             "followups": {},
             "last_interviewer_ts": 0.0,
             "last_candidate_ts": 0.0,
@@ -367,7 +381,7 @@ async def session_advance(body: dict[str, str]) -> JSONResponse:
 @app.post("/api/chat/stream")
 async def chat_stream(body: SessionChatIn) -> StreamingResponse:
     s = _get_session(body.session_id)
-    api_key = s.get("groq_api_key")
+    api_key = s.get("nvidia_api_key")
 
     def gen():
         event_type = body.event_type
@@ -471,7 +485,7 @@ async def chat_stream(body: SessionChatIn) -> StreamingResponse:
                     s["turns"].append(turn)
             yield f"data: {json.dumps({'done': True})}\n\n".encode("utf-8")
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n".encode("utf-8")
+            yield f"data: {json.dumps({'error': api_ws_detail(e)})}\n\n".encode("utf-8")
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -481,7 +495,7 @@ async def api_evaluate(body: EvaluateIn) -> JSONResponse:
     s = _get_session(body.session_id)
     plan: InterviewPlan = s["plan"]
     transcript = _transcript_from_session(list(s["turns"]))
-    key = (body.groq_api_key or "").strip() or s.get("groq_api_key")
+    key = (body.nvidia_api_key or "").strip() or s.get("nvidia_api_key")
 
     if not transcript.turns:
         raise HTTPException(status_code=400, detail="Transcript is empty.")
@@ -497,7 +511,13 @@ async def api_evaluate(body: EvaluateIn) -> JSONResponse:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Groq error: {e!s}") from e
+        if is_api_payload_too_large(e):
+            code = 413
+        elif is_api_rate_limit(e):
+            code = 429
+        else:
+            code = 502
+        raise HTTPException(status_code=code, detail=api_http_detail(e, context="Evaluation")) from e
 
     return JSONResponse(
         {
@@ -524,19 +544,36 @@ async def session_get(session_id: str) -> JSONResponse:
 @app.post("/api/transcribe")
 async def api_transcribe(
     file: UploadFile = File(...),
-    groq_api_key: str | None = Form(default=None),
+    nvidia_api_key: str | None = Form(default=None),
 ) -> JSONResponse:
     data = await file.read()
     if len(data) > 15 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Audio file too large (max 15MB).")
-    key = (groq_api_key or "").strip() or GROQ_API_KEY
-    if not key.strip():
-        raise HTTPException(status_code=400, detail="GROQ_API_KEY required for transcription.")
+    nv_key = (nvidia_api_key or "").strip() or NVIDIA_API_KEY
+    if not nv_key.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="NVIDIA API key required (form nvidia_api_key or NVIDIA_API_KEY in .env).",
+        )
     name = (file.filename or "clip.webm").lower()
     try:
-        text = await asyncio.to_thread(transcribe_audio_bytes, data, filename=name, api_key=key)
+        text = await asyncio.to_thread(
+            transcribe_audio_bytes,
+            data,
+            filename=name,
+            nvidia_api_key=(nvidia_api_key or "").strip() or None,
+        )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Transcription failed: {e!s}") from e
+        if is_api_payload_too_large(e):
+            code = 413
+        elif is_api_rate_limit(e):
+            code = 429
+        else:
+            code = 502
+        raise HTTPException(
+            status_code=code,
+            detail=api_http_detail(e, context="Transcription"),
+        ) from e
     return JSONResponse({"text": text})
 
 
@@ -548,27 +585,44 @@ async def ws_interview(websocket: WebSocket, session_id: str) -> None:
         await websocket.close(code=4404)
         return
 
-    await websocket.send_json({"type": "ready", "session_id": session_id})
-
-    with _SESSION_LOCK:
-        turns_snapshot = list(s["turns"])
-    need_opening = (not turns_snapshot) or (turns_snapshot[-1].get("role") != "interviewer")
-
-    if need_opening:
-        await _send_interviewer_voice(
-            websocket,
-            s,
-            session_id=session_id,
-            candidate_message="",
-            event_type="normal",
-            interaction="opening",
-            schedule_silence_watchdog=True,
-        )
-    _schedule_question_timer(session_id, websocket)
-
     try:
+        await websocket.send_json({"type": "ready", "session_id": session_id})
+
+        with _SESSION_LOCK:
+            turns_snapshot = list(s["turns"])
+        need_opening = (not turns_snapshot) or (turns_snapshot[-1].get("role") != "interviewer")
+
+        if need_opening:
+            try:
+                await _send_interviewer_voice(
+                    websocket,
+                    s,
+                    session_id=session_id,
+                    candidate_message="",
+                    event_type="normal",
+                    interaction="opening",
+                    schedule_silence_watchdog=True,
+                )
+            except Exception as e:
+                try:
+                    await websocket.send_json(
+                        {"type": "error", "detail": f"opening_failed:{api_ws_detail(e)}"},
+                    )
+                except Exception:
+                    pass
+
+        _schedule_question_timer(session_id, websocket)
+
         while True:
-            msg = await websocket.receive_json()
+            try:
+                msg = await websocket.receive_json()
+            except Exception:
+                try:
+                    await websocket.send_json({"type": "error", "detail": "invalid_json"})
+                except Exception:
+                    pass
+                continue
+
             mtype = msg.get("type")
 
             if mtype == "ping":
@@ -590,15 +644,24 @@ async def ws_interview(websocket: WebSocket, session_id: str) -> None:
                             "ts": time.time(),
                         }
                     )
-                await _send_interviewer_voice(
-                    websocket,
-                    s,
-                    session_id=session_id,
-                    candidate_message="",
-                    event_type="normal",
-                    interaction="opening",
-                    schedule_silence_watchdog=True,
-                )
+                try:
+                    await _send_interviewer_voice(
+                        websocket,
+                        s,
+                        session_id=session_id,
+                        candidate_message="",
+                        event_type="normal",
+                        interaction="opening",
+                        schedule_silence_watchdog=True,
+                    )
+                except Exception as e:
+                    try:
+                        await websocket.send_json(
+                            {"type": "error", "detail": f"advance_voice:{api_ws_detail(e)}"},
+                        )
+                        await websocket.send_json({"type": "turn_done"})
+                    except Exception:
+                        pass
                 _schedule_question_timer(session_id, websocket)
 
             elif mtype == "audio_webm":
@@ -614,13 +677,21 @@ async def ws_interview(websocket: WebSocket, session_id: str) -> None:
 
                 _cancel_voice_wait(s)
                 _cancel_ws_timer(session_id)
-                api_key = s.get("groq_api_key")
+                nk = s.get("nvidia_api_key")
                 try:
                     text = await asyncio.to_thread(
-                        lambda: transcribe_audio_bytes(raw, filename="clip.webm", api_key=api_key),
+                        lambda b=raw, key=nk: transcribe_audio_bytes(
+                            b,
+                            filename="clip.webm",
+                            nvidia_api_key=key,
+                        ),
                     )
                 except Exception as e:
-                    await websocket.send_json({"type": "error", "detail": f"stt:{e!s}"})
+                    try:
+                        await websocket.send_json({"type": "error", "detail": f"stt:{api_ws_detail(e)}"})
+                        await websocket.send_json({"type": "turn_done"})
+                    except Exception:
+                        pass
                     continue
 
                 await websocket.send_json({"type": "candidate_text", "text": text})
@@ -642,20 +713,36 @@ async def ws_interview(websocket: WebSocket, session_id: str) -> None:
                     s["followups"][qid_live] = int(s["followups"].get(qid_live, 0)) + 1
                     s["last_candidate_ts"] = time.time()
 
-                await _send_interviewer_voice(
-                    websocket,
-                    s,
-                    session_id=session_id,
-                    candidate_message=text.strip(),
-                    event_type="normal",
-                    interaction="continue",
-                    schedule_silence_watchdog=True,
-                )
+                try:
+                    await _send_interviewer_voice(
+                        websocket,
+                        s,
+                        session_id=session_id,
+                        candidate_message=text.strip(),
+                        event_type="normal",
+                        interaction="continue",
+                        schedule_silence_watchdog=True,
+                    )
+                except Exception as e:
+                    try:
+                        await websocket.send_json(
+                            {"type": "error", "detail": f"reply_voice:{api_ws_detail(e)}"},
+                        )
+                        await websocket.send_json({"type": "turn_done"})
+                    except Exception:
+                        pass
                 _schedule_question_timer(session_id, websocket)
 
             else:
                 await websocket.send_json({"type": "error", "detail": f"unknown_type:{mtype}"})
 
     except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "detail": f"fatal:{api_ws_detail(e)}"})
+        except Exception:
+            pass
+    finally:
         _cancel_ws_timer(session_id)
         _cancel_voice_wait(s)

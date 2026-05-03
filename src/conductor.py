@@ -1,18 +1,15 @@
-"""Component 2 — Live interviewer text (Groq streaming only).
-
-Does not transcribe audio, synthesize speech, or score answers.
-"""
+"""Component 2 — Live interviewer text (NVIDIA NIM, OpenAI-compatible streaming)."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Iterator
 
-from groq import Groq
+from openai import OpenAI
 
 from src.policies import policy_prefix_for_event, should_nudge_wrap
 from src.schemas import InterviewPlan, Transcript, TranscriptTurn
-from src.settings import GROQ_API_KEY, MAX_FOLLOW_UPS, MODEL_INTERVIEW
+from src.settings import MAX_FOLLOW_UPS, NVIDIA_API_KEY, NVIDIA_INFERENCE_BASE_URL, NVIDIA_INTERVIEW_MODEL
 
 
 _CONDUCTOR_SYSTEM = """You are a senior technical interviewer conducting a live voice interview.
@@ -101,16 +98,16 @@ def stream_interviewer_reply(
     api_key: str | None = None,
     model: str | None = None,
 ) -> Iterator[str]:
-    key = (api_key or GROQ_API_KEY).strip()
+    key = (api_key or NVIDIA_API_KEY).strip()
     if not key:
-        raise ValueError("GROQ_API_KEY is not set.")
+        raise ValueError("NVIDIA_API_KEY is not set.")
 
     if q_index < 0 or q_index >= len(plan.questions):
         yield "We have reached the end of the planned question set. Thank the candidate warmly and end the interview."
         return
 
-    client = Groq(api_key=key)
-    use_model = (model or MODEL_INTERVIEW).strip()
+    client = OpenAI(base_url=NVIDIA_INFERENCE_BASE_URL.rstrip("/"), api_key=key)
+    use_model = (model or NVIDIA_INTERVIEW_MODEL).strip()
 
     user_content = build_user_payload(
         plan,
@@ -125,6 +122,7 @@ def stream_interviewer_reply(
     stream = client.chat.completions.create(
         model=use_model,
         temperature=0.55,
+        max_tokens=2048,
         messages=[
             {"role": "system", "content": _CONDUCTOR_SYSTEM},
             {"role": "user", "content": user_content},
@@ -133,6 +131,8 @@ def stream_interviewer_reply(
     )
 
     for chunk in stream:
+        if not chunk.choices:
+            continue
         delta = chunk.choices[0].delta.content or ""
         if delta:
             yield delta

@@ -244,7 +244,7 @@
   <header>
     <div class="wrap">
       <h1>Technical Interview Agent</h1>
-      <div class="sub">Groq Llama + Whisper + Orpheus TTS · Voice WebSocket · Structured evaluation</div>
+      <div class="sub">NVIDIA NIM · <span class="kbd">openai/gpt-oss-20b</span> (plan + interview + eval) · Nemotron ASR (STT) · browser speech for interviewer audio</div>
     </div>
   </header>
   <main class="wrap">
@@ -259,8 +259,9 @@
       <div class="card">
         <div class="inner">
           <h2>Credentials</h2>
-          <label>Groq API key <span class="pill">optional if set in .env</span></label>
-          <input type="password" id="groqKey" autocomplete="off" placeholder="gsk_…" />
+          <label>NVIDIA API key <span class="pill">required — plan, interview LLM, evaluation, Nemotron STT</span></label>
+          <input type="password" id="nvidiaKey" autocomplete="off" placeholder="nvapi-…" />
+          <p class="sub" style="margin:.4rem 0 0;font-size:.8rem">Same key as on <a href="https://build.nvidia.com/" target="_blank" rel="noopener">build.nvidia.com</a>. You can also set <span class="kbd">NVIDIA_API_KEY</span> in <span class="kbd">.env</span> and leave this blank.</p>
           <div class="row" style="margin-top:1rem">
             <button type="button" class="ghost" id="loadBackend">Load backend fixture</button>
             <button type="button" class="ghost" id="loadMl">Load ML fixture</button>
@@ -295,7 +296,7 @@
             <button type="button" class="ghost on" data-mode="text">Start as: Text</button>
             <button type="button" class="ghost" data-mode="voice">Start as: Voice + face</button>
           </div>
-          <p class="sub" style="margin:.35rem 0 0">Voice-first skips the browser text opening; connect voice on the next screen to hear Groq Orpheus ask the first question.</p>
+          <p class="sub" style="margin:.35rem 0 0">Voice-first skips the browser text opening; connect voice on the next screen. Interviewer speech uses your browser’s voice; your answers go to <b>NVIDIA Nemotron ASR</b> (streaming English).</p>
           <div class="row" style="margin-top:.85rem">
             <button type="button" class="primary" id="btnStart">Start interview session</button>
             <button type="button" class="ghost" id="btnBack1">Edit inputs</button>
@@ -326,7 +327,7 @@
               <span class="pill" id="qProgressFs">Q —</span>
             </div>
             <p style="font-size:.82rem;color:var(--muted);margin:0 0 .5rem">
-              Full-screen voice interview: Groq <b>Whisper</b> listens after each interviewer turn; <b>Orpheus</b> speaks replies. Stay in frame; speak when prompted — long pauses end your turn automatically.
+              Full-screen voice interview: <b>NVIDIA Nemotron ASR</b> (English) for your speech; interviewer lines use <b>NVIDIA <span class="kbd">openai/gpt-oss-20b</span></b> then your browser’s text-to-speech. Stay in frame; speak when prompted — long pauses end your turn automatically.
             </p>
             <div class="face-grid">
               <div class="vwin">
@@ -416,6 +417,7 @@
     let mediaRecorderAL = null;
     let autoListenChunks = [];
     let autoListenMaxTimer = null;
+    let voicePingTimer = null;
 
     function wsUrl(path) {
       const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -496,6 +498,43 @@
         });
     }
 
+    function speakBrowserTts(text) {
+      const t = String(text || "").trim();
+      if (!t || !window.speechSynthesis) return Promise.resolve();
+      return new Promise((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          $("orb").classList.remove("speaking");
+          resolve();
+        };
+        const ms = Math.min(120000, Math.max(12000, t.length * 70));
+        const timer = setTimeout(done, ms);
+        try {
+          const u = new SpeechSynthesisUtterance(t);
+          u.lang = "en-US";
+          $("orb").classList.add("speaking");
+          u.onend = () => {
+            clearTimeout(timer);
+            done();
+          };
+          u.onerror = () => {
+            clearTimeout(timer);
+            done();
+          };
+          window.speechSynthesis.speak(u);
+        } catch (_) {
+          clearTimeout(timer);
+          done();
+        }
+      });
+    }
+
+    function enqueueBrowserTts(text) {
+      ttsQueue = ttsQueue.then(() => speakBrowserTts(text)).catch(() => {});
+    }
+
     function stopAutoListen() {
       if (autoListenMaxTimer) {
         clearTimeout(autoListenMaxTimer);
@@ -514,7 +553,7 @@
       autoListenChunks = [];
     }
 
-    function startAutoListen() {
+    async function startAutoListen() {
       stopAutoListen();
       if (!voiceWs || voiceWs.readyState !== 1 || !camStream) return;
       const mime = pickRecMime();
@@ -526,7 +565,9 @@
         mediaRecorderAL = new MediaRecorder(camStream);
       }
       const listenCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (listenCtx.state === "suspended") listenCtx.resume();
+      try {
+        if (listenCtx.state === "suspended") await listenCtx.resume();
+      } catch (_) {}
       const src = listenCtx.createMediaStreamSource(camStream);
       const an = listenCtx.createAnalyser();
       an.fftSize = 1024;
@@ -534,8 +575,11 @@
       const buf = new Uint8Array(an.fftSize);
       let speechFrames = 0;
       let quietFrames = 0;
-      const needQuiet = 22;
-      const rmsSpeech = 0.035;
+      const listenStarted = Date.now();
+      const minListenMs = 2800;
+      const needQuiet = 72;
+      const minSpeechFrames = 18;
+      const rmsSpeech = 0.032;
       mediaRecorderAL.ondataavailable = (ev) => {
         if (ev.data && ev.data.size > 0) autoListenChunks.push(ev.data);
       };
@@ -551,7 +595,7 @@
           $("voiceStatus").textContent = "Listening ended — signal too short. Use Hold to speak if needed.";
           return;
         }
-        $("voiceStatus").textContent = "Sending your answer to Groq Whisper…";
+        $("voiceStatus").textContent = "Sending your answer for transcription…";
         const b64 = await blobToBase64(blob);
         voiceWs.send(JSON.stringify({ type: "audio_webm", b64 }));
       };
@@ -571,7 +615,8 @@
         } else {
           quietFrames++;
         }
-        if (speechFrames > 6 && quietFrames >= needQuiet) {
+        const elapsed = Date.now() - listenStarted;
+        if (elapsed >= minListenMs && speechFrames >= minSpeechFrames && quietFrames >= needQuiet) {
           mediaRecorderAL.stop();
           return;
         }
@@ -584,7 +629,7 @@
             mediaRecorderAL.stop();
           } catch (_) {}
         }
-      }, 52000);
+      }, 90000);
     }
 
     async function ensureCamMic() {
@@ -600,6 +645,14 @@
 
     function stopVoiceLane() {
       stopAutoListen();
+      try {
+        window.speechSynthesis.cancel();
+      } catch (_) {}
+      ttsQueue = Promise.resolve();
+      if (voicePingTimer) {
+        clearInterval(voicePingTimer);
+        voicePingTimer = null;
+      }
       voiceUserDisconnect = true;
       if (voiceWs) {
         try {
@@ -619,21 +672,38 @@
       $("err3").style.display = "none";
       voiceUserDisconnect = false;
       await ensureCamMic();
-      if (voiceWs && voiceWs.readyState === 1) return;
+      if (voicePingTimer) {
+        clearInterval(voicePingTimer);
+        voicePingTimer = null;
+      }
       if (voiceWs) {
+        voiceWs.onopen = null;
+        voiceWs.onmessage = null;
+        voiceWs.onclose = null;
+        voiceWs.onerror = null;
         try {
           voiceWs.close();
         } catch (_) {}
         voiceWs = null;
+        await new Promise((r) => setTimeout(r, 280));
       }
       const url = wsUrl("/ws/interview/" + encodeURIComponent(sessionId));
       $("voiceStatus").textContent = "Connecting voice lane…";
       voiceWs = new WebSocket(url);
       voiceWs.onopen = () => {
+        ttsQueue = Promise.resolve();
         $("voiceStatus").textContent = "Connected — listen, then speak when you see “Your turn”.";
         $("btnDisconnectVoice").disabled = false;
         $("btnPTT").disabled = false;
         $("btnWsNext").disabled = false;
+        if (voicePingTimer) clearInterval(voicePingTimer);
+        voicePingTimer = setInterval(() => {
+          if (voiceWs && voiceWs.readyState === 1) {
+            try {
+              voiceWs.send(JSON.stringify({ type: "ping" }));
+            } catch (_) {}
+          }
+        }, 25000);
       };
       voiceWs.onmessage = async (ev) => {
         let msg = {};
@@ -655,12 +725,20 @@
         if (msg.type === "tts_chunk" && msg.b64) {
           enqueueTts(msg.b64);
         }
+        if (msg.type === "tts_browser" && msg.text) {
+          enqueueBrowserTts(msg.text);
+        }
         if (msg.type === "turn_done") {
-          ttsQueue = ttsQueue.then(() => {
-            $("orb").classList.remove("speaking");
-            $("voiceStatus").textContent = "Your turn — speak when ready; we detect end of speech.";
-            startAutoListen();
-          });
+          ttsQueue = ttsQueue
+            .then(() => {
+              $("orb").classList.remove("speaking");
+              $("voiceStatus").textContent = "Your turn — speak when ready; we detect end of speech.";
+              return startAutoListen();
+            })
+            .catch(() => {})
+            .then(() => {
+              refreshMeta().catch(() => {});
+            });
         }
         if (msg.type === "silence_prompt") {
           $("voiceStatus").textContent = "No reply detected — interviewer is checking in.";
@@ -679,19 +757,37 @@
         if (msg.type === "error") {
           if (msg.detail === "no_speech_detected") {
             $("voiceStatus").textContent = "No speech detected — try again or use Hold to speak.";
+            setTimeout(() => {
+              if (voiceWs && voiceWs.readyState === 1) startAutoListen().catch(() => {});
+            }, 400);
+            return;
+          }
+          const d = String(msg.detail || "");
+          if (d.startsWith("opening_failed:") || d.startsWith("advance_voice:") || d.startsWith("reply_voice:")) {
+            $("voiceStatus").textContent =
+              "Voice error (NVIDIA LLM / Nemotron STT / browser TTS). Check nvapi key and build.nvidia.com quota. " + d.slice(0, 200);
+            ttsQueue = Promise.resolve();
+            setTimeout(() => {
+              if (voiceWs && voiceWs.readyState === 1) startAutoListen().catch(() => {});
+            }, 500);
             return;
           }
           $("voiceStatus").textContent = "Error: " + (msg.detail || JSON.stringify(msg));
         }
       };
-      voiceWs.onclose = () => {
+      voiceWs.onclose = (ev) => {
+        if (voicePingTimer) {
+          clearInterval(voicePingTimer);
+          voicePingTimer = null;
+        }
         $("btnDisconnectVoice").disabled = true;
         $("btnPTT").disabled = true;
         $("btnWsNext").disabled = true;
         stopAutoListen();
+        const code = ev && typeof ev.code === "number" ? " (code " + ev.code + ")" : "";
         $("voiceStatus").textContent = voiceUserDisconnect
           ? "Disconnected."
-          : "Connection closed — tap Reconnect voice.";
+          : "Connection closed" + code + " — tap Reconnect voice. If this repeats, check server logs and NVIDIA API limits.";
         voiceWs = null;
       };
       voiceWs.onerror = () => {
@@ -720,7 +816,10 @@
 
     $("btnWsNext").onclick = () => {
       if (voiceWs && voiceWs.readyState === 1) {
+        stopAutoListen();
+        $("voiceStatus").textContent = "Requesting next question…";
         voiceWs.send(JSON.stringify({ type: "advance_question" }));
+        setTimeout(() => refreshMeta().catch(() => {}), 500);
       }
     };
 
@@ -744,7 +843,7 @@
       };
       mediaRecorder.onstop = async () => {
         $("btnPTT").classList.remove("active");
-        $("voiceStatus").textContent = "Transcribing with Groq Whisper…";
+        $("voiceStatus").textContent = "Transcribing…";
         const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || "audio/webm" });
         recChunks = [];
         if (!voiceWs || voiceWs.readyState !== 1 || blob.size < 200) {
@@ -778,10 +877,10 @@
       });
     }
 
-    function groqBody(extra) {
-      const k = $("groqKey").value.trim();
+    function apiBody(extra) {
+      const nk = $("nvidiaKey").value.trim();
       const o = { ...extra };
-      if (k) o.groq_api_key = k;
+      if (nk) o.nvidia_api_key = nk;
       return o;
     }
 
@@ -806,7 +905,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
-            groqBody({
+            apiBody({
               job_description: $("jd").value,
               candidate_profile: $("cp").value,
             })
@@ -905,7 +1004,7 @@
         const r = await fetch("/api/session/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(groqBody({ plan: planJson })),
+          body: JSON.stringify(apiBody({ plan: planJson })),
         });
         const t = await r.json();
         if (!r.ok) throw new Error(t.detail || JSON.stringify(t));
@@ -1121,7 +1220,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
-            groqBody({
+            apiBody({
               session_id: sessionId,
               job_description: $("jd").value,
               candidate_profile: $("cp").value,

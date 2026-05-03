@@ -1,6 +1,6 @@
 """Deterministic interview policy hints (no LLM).
 
-The conductor LLM receives these strings as context; behavior stays testable without Groq.
+The conductor LLM receives these strings as context; behavior stays testable without calling any API.
 """
 
 from __future__ import annotations
