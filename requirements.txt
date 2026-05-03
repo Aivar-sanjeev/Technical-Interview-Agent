@@ -1,6 +1,8 @@
-groq>=0.9.0
+openai>=1.55.0
 python-dotenv>=1.0.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.0.0
 python-multipart>=0.0.9
+nvidia-riva-client>=2.19.0
+grpcio>=1.60.0
