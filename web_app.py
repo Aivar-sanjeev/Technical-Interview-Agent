@@ -25,10 +25,11 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.conductor import stream_interviewer_reply
+from src.evaluator import evaluate_with_repair, validate_report_against_transcript
 from src.question_generator import generate_interview_plan
 from src.schemas import InterviewPlan, Transcript, TranscriptTurn
 
-app = FastAPI(title="Technical Interview Agent", version="0.2.0")
+app = FastAPI(title="Technical Interview Agent", version="0.3.0")
 app.mount("/fixtures", StaticFiles(directory=str(_ROOT / "fixtures")), name="fixtures")
 
 SESSIONS: dict[str, dict[str, Any]] = {}
@@ -58,6 +59,13 @@ class PlanIn(BaseModel):
 
 class SessionStartIn(BaseModel):
     plan: dict[str, Any]
+    groq_api_key: str | None = None
+
+
+class EvaluateIn(BaseModel):
+    session_id: str = Field(min_length=8)
+    job_description: str = Field(min_length=40)
+    candidate_profile: str = Field(min_length=40)
     groq_api_key: str | None = None
 
 
@@ -266,6 +274,39 @@ async def chat_stream(body: SessionChatIn) -> StreamingResponse:
             yield f"data: {json.dumps({'error': str(e)})}\n\n".encode("utf-8")
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.post("/api/evaluate")
+async def api_evaluate(body: EvaluateIn) -> JSONResponse:
+    s = _get_session(body.session_id)
+    plan: InterviewPlan = s["plan"]
+    transcript = _transcript_from_session(list(s["turns"]))
+    key = (body.groq_api_key or "").strip() or s.get("groq_api_key")
+
+    if not transcript.turns:
+        raise HTTPException(status_code=400, detail="Transcript is empty.")
+
+    try:
+        report, issues = evaluate_with_repair(
+            job_description=body.job_description,
+            candidate_profile=body.candidate_profile,
+            plan=plan,
+            transcript=transcript,
+            api_key=key,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Groq error: {e!s}") from e
+
+    residual = validate_report_against_transcript(report, transcript)
+    return JSONResponse(
+        {
+            "report": report.model_dump(),
+            "validation_issues": issues,
+            "residual_issues": residual,
+        }
+    )
 
 
 @app.get("/api/session/{session_id}")

@@ -1,0 +1,46 @@
+{
+  "version": "1",
+  "recommendation": "hire",
+  "overall_summary": "The candidate gave specific examples of improving latency with caching and described idempotent webhook handling with enough detail to assess ownership. Trade-offs around splitting a monolith were pragmatic. Depth on streaming systems was thinner than the JD emphasized.",
+  "strengths": [
+    "Concrete metrics when discussing caching impact on tail latency",
+    "Clear mental model for idempotency in payment webhooks",
+    "Honest about Kafka experience being limited rather than overstating"
+  ],
+  "gaps": [
+    "Less demonstrated depth on high-throughput streaming and consumer semantics",
+    "Kubernetes operations mostly described at deploy/service level"
+  ],
+  "red_flags": [],
+  "scenario_handling_notes": "Silence was handled with a short check-in without solution hints. Clarification narrowed the question scope. Off-topic drift was redirected once and the candidate refocused.",
+  "competencies": [
+    {
+      "competency": "Backend / API design",
+      "score": 4,
+      "confidence": "high",
+      "summary": "Solid articulation of idempotent APIs and collaboration patterns; good alignment with role responsibilities.",
+      "evidence": [
+        {
+          "quote": "We used idempotency keys on the webhook handler so retries from the processor would not double-charge.",
+          "turn_id": "example-turn-candidate-2"
+        },
+        {
+          "quote": "After we cached the hottest read paths in Redis, p95 for the listing endpoint dropped roughly forty percent.",
+          "turn_id": "example-turn-candidate-4"
+        }
+      ]
+    },
+    {
+      "competency": "Distributed systems (queues / streaming)",
+      "score": 3,
+      "confidence": "medium",
+      "summary": "Understands where queues help but limited hands-on detail on delivery guarantees and operational failure modes.",
+      "evidence": [
+        {
+          "quote": "I have not run Kafka in production myself — most of my async work has been Redis-backed workers and scheduled jobs.",
+          "turn_id": "example-turn-candidate-7"
+        }
+      ]
+    }
+  ]
+}

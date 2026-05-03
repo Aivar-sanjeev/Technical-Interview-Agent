@@ -161,13 +161,22 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .kbd { font-family: "JetBrains Mono", monospace; font-size: .72rem; border: 1px solid var(--border); padding: .1rem .35rem; border-radius: 6px; color: var(--muted); }
+    .rec { font-size: 1.05rem; font-weight: 700; margin: .25rem 0 .75rem; color: var(--accent); }
+    .cols { display: grid; gap: .65rem; }
+    @media (min-width: 720px) { .cols.three { grid-template-columns: repeat(3, 1fr); } }
+    .box { border: 1px solid var(--border); border-radius: 10px; padding: .65rem .75rem; background: rgba(18,24,34,.65); }
+    .box h3 { margin: 0 0 .35rem; font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .box ul { margin: 0; padding-left: 1.1rem; font-size: .88rem; }
+    .comp { border: 1px solid var(--border); border-radius: 10px; padding: .75rem .8rem; margin-top: .55rem; }
+    .comp h4 { margin: 0 0 .35rem; font-size: .95rem; }
+    .ev { font-family: "JetBrains Mono", monospace; font-size: .76rem; color: #cbd5e1; border-left: 3px solid var(--accent2); padding: .35rem .5rem; margin: .35rem 0 0; background: rgba(0,0,0,.2); }
   </style>
 </head>
 <body>
   <header>
     <div class="wrap">
       <h1>Technical Interview Agent</h1>
-      <div class="sub">Tailored questions · Live Groq interview · Structured evaluation (evaluate after phase 3)</div>
+      <div class="sub">Tailored questions · Live Groq interview · Structured evaluation with transcript citations</div>
     </div>
   </header>
   <main class="wrap">
@@ -236,7 +245,7 @@
           <div class="row" style="margin-bottom:.5rem">
             <span class="pill" id="qProgress">Q —</span>
             <button type="button" class="ghost" id="btnNextQ">Next question</button>
-            <button type="button" class="ghost" id="btnToEval" disabled title="Available after evaluator is wired">Evaluate</button>
+            <button type="button" class="primary" id="btnToEval">Evaluate</button>
           </div>
           <div class="chat" id="chat"></div>
           <div class="typing" id="typing" style="display:none">Interviewer is typing…</div>
@@ -268,8 +277,11 @@
       <div class="card">
         <div class="inner">
           <h2>Evaluation report</h2>
-          <p class="sub" id="evalHint">Run evaluation from the latest code — endpoint <span class="kbd">POST /api/evaluate</span>.</p>
-          <pre id="evalOut" style="display:none;white-space:pre-wrap;font-size:.78rem"></pre>
+          <p class="sub" id="evalHint">Structured JSON from <span class="kbd">POST /api/evaluate</span> — evidence must quote the candidate verbatim.</p>
+          <div class="error" id="err4" style="display:none"></div>
+          <div id="evalIssues" style="display:none;margin:.5rem 0;font-size:.82rem;color:var(--warn)"></div>
+          <div id="evalRender" style="display:none;margin-top:.75rem"></div>
+          <pre id="evalOut" style="display:none;white-space:pre-wrap;font-size:.72rem;color:var(--muted);margin-top:1rem"></pre>
         </div>
       </div>
     </div>
@@ -517,6 +529,111 @@
       show($("screen3"), false);
       show($("screen2"), true);
       setStep("2");
+    };
+
+    function renderReport(rep) {
+      const el = $("evalRender");
+      el.innerHTML = "";
+      const rec = document.createElement("div");
+      rec.className = "rec";
+      rec.textContent = "Recommendation: " + (rep.recommendation || "—");
+      el.appendChild(rec);
+      const sum = document.createElement("p");
+      sum.style.fontSize = ".92rem";
+      sum.style.color = "var(--text)";
+      sum.textContent = rep.overall_summary || "";
+      el.appendChild(sum);
+
+      const cols = document.createElement("div");
+      cols.className = "cols three";
+      [["Strengths", rep.strengths], ["Gaps", rep.gaps], ["Red flags", rep.red_flags]].forEach(([title, arr]) => {
+        const b = document.createElement("div");
+        b.className = "box";
+        b.innerHTML = "<h3>" + title + "</h3>";
+        const ul = document.createElement("ul");
+        (arr || []).forEach((x) => {
+          const li = document.createElement("li");
+          li.textContent = x;
+          ul.appendChild(li);
+        });
+        b.appendChild(ul);
+        cols.appendChild(b);
+      });
+      el.appendChild(cols);
+
+      if (rep.scenario_handling_notes) {
+        const sn = document.createElement("p");
+        sn.style.fontSize = ".85rem";
+        sn.style.color = "var(--muted)";
+        sn.style.marginTop = ".75rem";
+        sn.innerHTML = "<b>Scenario handling</b> — " + escapeHtml(rep.scenario_handling_notes);
+        el.appendChild(sn);
+      }
+
+      (rep.competencies || []).forEach((c) => {
+        const d = document.createElement("div");
+        d.className = "comp";
+        d.innerHTML =
+          "<h4>" +
+          escapeHtml(c.competency) +
+          "</h4><div style=\"font-size:.8rem;color:var(--muted)\">Score: " +
+          c.score +
+          " · Confidence: " +
+          escapeHtml(c.confidence) +
+          "</div><p style=\"margin:.4rem 0 0;font-size:.88rem\">" +
+          escapeHtml(c.summary || "") +
+          "</p>";
+        (c.evidence || []).forEach((ev) => {
+          const q = document.createElement("div");
+          q.className = "ev";
+          q.textContent = (ev.turn_id ? "[" + ev.turn_id + "] " : "") + '"' + (ev.quote || "") + '"';
+          d.appendChild(q);
+        });
+        el.appendChild(d);
+      });
+    }
+
+    $("btnToEval").onclick = async () => {
+      if (!sessionId) return;
+      $("err4").style.display = "none";
+      $("evalIssues").style.display = "none";
+      $("evalRender").style.display = "none";
+      $("evalOut").style.display = "none";
+      overlay.classList.add("on");
+      try {
+        const r = await fetch("/api/evaluate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            groqBody({
+              session_id: sessionId,
+              job_description: $("jd").value,
+              candidate_profile: $("cp").value,
+            })
+          ),
+        });
+        const t = await r.json();
+        if (!r.ok) throw new Error(t.detail || JSON.stringify(t));
+        show($("screen3"), false);
+        show($("screen4"), true);
+        setStep("4");
+        renderReport(t.report);
+        $("evalRender").style.display = "";
+        const issues = [...(t.validation_issues || []), ...(t.residual_issues || [])].filter(Boolean);
+        if (issues.length) {
+          $("evalIssues").textContent = "Validation notes: " + issues.join(" | ");
+          $("evalIssues").style.display = "";
+        }
+        $("evalOut").textContent = JSON.stringify(t.report, null, 2);
+        $("evalOut").style.display = "";
+      } catch (e) {
+        $("err4").textContent = e.message || String(e);
+        $("err4").style.display = "";
+        show($("screen4"), true);
+        setStep("4");
+      } finally {
+        overlay.classList.remove("on");
+      }
     };
   </script>
 </body>
