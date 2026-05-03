@@ -30,7 +30,12 @@ from src.conductor import stream_interviewer_reply
 from src.evaluator import evaluate_with_repair
 from src.question_generator import generate_interview_plan
 from src.schemas import InterviewPlan, Transcript, TranscriptTurn
-from src.settings import GROQ_API_KEY, QUESTION_TIMEOUT_SECONDS
+from src.settings import (
+    GROQ_API_KEY,
+    QUESTION_TIMEOUT_SECONDS,
+    VOICE_SILENCE_NUDGE_SECONDS,
+    VOICE_SILENCE_SKIP_SECONDS,
+)
 from src.stt_groq import transcribe_audio_bytes
 from src.tts_groq import synthesize_speech_wav_chunks
 
@@ -153,13 +158,88 @@ def _schedule_question_timer(session_id: str, websocket: WebSocket) -> None:
         _WS_TIMERS[session_id] = asyncio.create_task(_fire())
 
 
+def _cancel_voice_wait(s: dict[str, Any]) -> None:
+    t = s.pop("_voice_silence_task", None)
+    if t is not None and not t.done():
+        t.cancel()
+
+
+def _kick_voice_silence_watchdog(s: dict[str, Any], websocket: WebSocket, session_id: str) -> None:
+    _cancel_voice_wait(s)
+    try:
+        s["_voice_silence_task"] = asyncio.create_task(_voice_silence_pipeline(websocket, session_id, s))
+    except RuntimeError:
+        pass
+
+
+async def _voice_silence_pipeline(websocket: WebSocket, session_id: str, s: dict[str, Any]) -> None:
+    """After interviewer speaks: nudge on silence, then auto-advance if still no reply."""
+    try:
+        await asyncio.sleep(VOICE_SILENCE_NUDGE_SECONDS)
+        with _SESSION_LOCK:
+            sess = SESSIONS.get(session_id)
+            if sess is not s:
+                return
+            if float(sess.get("last_candidate_ts", 0)) > float(sess.get("last_interviewer_ts", 0)):
+                return
+        await websocket.send_json({"type": "silence_prompt", "stage": 1})
+        await _send_interviewer_voice(
+            websocket,
+            s,
+            session_id=session_id,
+            candidate_message="",
+            event_type="silence",
+            interaction="continue",
+            schedule_silence_watchdog=False,
+        )
+        await asyncio.sleep(VOICE_SILENCE_SKIP_SECONDS)
+        with _SESSION_LOCK:
+            sess = SESSIONS.get(session_id)
+            if sess is not s:
+                return
+            if float(sess.get("last_candidate_ts", 0)) > float(sess.get("last_interviewer_ts", 0)):
+                return
+            plan: InterviewPlan = sess["plan"]
+            if sess["q_index"] + 1 >= len(plan.questions):
+                await websocket.send_json({"type": "interview_complete", "detail": "end_of_plan"})
+                return
+            sess["q_index"] += 1
+            sess["turns"].append(
+                {
+                    "id": _tid(),
+                    "role": "system",
+                    "text": "System: no candidate response after reminder — advanced to next planned question.",
+                    "ts": time.time(),
+                }
+            )
+        await websocket.send_json(
+            {"type": "auto_advanced", "reason": "silence", "message": "Moving to the next question."}
+        )
+        await _send_interviewer_voice(
+            websocket,
+            s,
+            session_id=session_id,
+            candidate_message="",
+            event_type="normal",
+            interaction="opening",
+            schedule_silence_watchdog=True,
+        )
+        _schedule_question_timer(session_id, websocket)
+    except asyncio.CancelledError:
+        return
+    except (WebSocketDisconnect, RuntimeError):
+        return
+
+
 async def _send_interviewer_voice(
     websocket: WebSocket,
     s: dict[str, Any],
     *,
+    session_id: str,
     candidate_message: str,
     event_type: str,
     interaction: str,
+    schedule_silence_watchdog: bool = True,
 ) -> str:
     """Generate interviewer text, persist, stream Orpheus WAV chunks to client. Returns full text."""
     api_key = s.get("groq_api_key")
@@ -211,6 +291,10 @@ async def _send_interviewer_voice(
             }
         )
     await websocket.send_json({"type": "turn_done"})
+    with _SESSION_LOCK:
+        s["last_interviewer_ts"] = time.time()
+    if schedule_silence_watchdog:
+        _kick_voice_silence_watchdog(s, websocket, session_id)
     return full
 
 
@@ -251,6 +335,8 @@ async def session_start(body: SessionStartIn) -> JSONResponse:
             "q_index": 0,
             "groq_api_key": (body.groq_api_key or "").strip() or None,
             "followups": {},
+            "last_interviewer_ts": 0.0,
+            "last_candidate_ts": 0.0,
         }
     return JSONResponse({"session_id": sid, "question_count": len(plan.questions)})
 
@@ -472,9 +558,11 @@ async def ws_interview(websocket: WebSocket, session_id: str) -> None:
         await _send_interviewer_voice(
             websocket,
             s,
+            session_id=session_id,
             candidate_message="",
             event_type="normal",
             interaction="opening",
+            schedule_silence_watchdog=True,
         )
     _schedule_question_timer(session_id, websocket)
 
@@ -486,6 +574,7 @@ async def ws_interview(websocket: WebSocket, session_id: str) -> None:
             if mtype == "ping":
                 await websocket.send_json({"type": "pong"})
             elif mtype == "advance_question":
+                _cancel_voice_wait(s)
                 _cancel_ws_timer(session_id)
                 with _SESSION_LOCK:
                     plan_live: InterviewPlan = s["plan"]
@@ -504,9 +593,11 @@ async def ws_interview(websocket: WebSocket, session_id: str) -> None:
                 await _send_interviewer_voice(
                     websocket,
                     s,
+                    session_id=session_id,
                     candidate_message="",
                     event_type="normal",
                     interaction="opening",
+                    schedule_silence_watchdog=True,
                 )
                 _schedule_question_timer(session_id, websocket)
 
@@ -521,6 +612,7 @@ async def ws_interview(websocket: WebSocket, session_id: str) -> None:
                     await websocket.send_json({"type": "error", "detail": "empty_audio"})
                     continue
 
+                _cancel_voice_wait(s)
                 _cancel_ws_timer(session_id)
                 api_key = s.get("groq_api_key")
                 try:
@@ -532,25 +624,32 @@ async def ws_interview(websocket: WebSocket, session_id: str) -> None:
                     continue
 
                 await websocket.send_json({"type": "candidate_text", "text": text})
-                if text.strip():
-                    with _SESSION_LOCK:
-                        s["turns"].append(
-                            {
-                                "id": _tid(),
-                                "role": "candidate",
-                                "text": text.strip(),
-                                "ts": time.time(),
-                            }
-                        )
-                        qid_live = s["plan"].questions[s["q_index"]].id
-                        s["followups"][qid_live] = int(s["followups"].get(qid_live, 0)) + 1
+                if not (text or "").strip():
+                    await websocket.send_json({"type": "error", "detail": "no_speech_detected"})
+                    _kick_voice_silence_watchdog(s, websocket, session_id)
+                    _schedule_question_timer(session_id, websocket)
+                    continue
+                with _SESSION_LOCK:
+                    s["turns"].append(
+                        {
+                            "id": _tid(),
+                            "role": "candidate",
+                            "text": text.strip(),
+                            "ts": time.time(),
+                        }
+                    )
+                    qid_live = s["plan"].questions[s["q_index"]].id
+                    s["followups"][qid_live] = int(s["followups"].get(qid_live, 0)) + 1
+                    s["last_candidate_ts"] = time.time()
 
                 await _send_interviewer_voice(
                     websocket,
                     s,
+                    session_id=session_id,
                     candidate_message=text.strip(),
                     event_type="normal",
                     interaction="continue",
+                    schedule_silence_watchdog=True,
                 )
                 _schedule_question_timer(session_id, websocket)
 
@@ -559,3 +658,4 @@ async def ws_interview(websocket: WebSocket, session_id: str) -> None:
 
     except WebSocketDisconnect:
         _cancel_ws_timer(session_id)
+        _cancel_voice_wait(s)

@@ -26,10 +26,15 @@ ORPHEUS_VOICE: str = os.getenv("GROQ_ORPHEUS_VOICE", "troy").strip()
 ORPHEUS_MAX_INPUT_CHARS: int = int(os.getenv("GROQ_ORPHEUS_MAX_CHARS", "200"))
 
 # ── Interview timing (PLAN.md) ─────────────────────────────────
-QUESTION_TIMEOUT_SECONDS: int = int(os.getenv("QUESTION_TIMEOUT_SECONDS", "40"))
+QUESTION_TIMEOUT_SECONDS: int = int(os.getenv("QUESTION_TIMEOUT_SECONDS", "120"))
 SILENCE_THRESHOLD_SECONDS: float = float(os.getenv("SILENCE_THRESHOLD_SECONDS", "4"))
 MAX_FOLLOW_UPS: int = int(os.getenv("MAX_FOLLOW_UPS", "2"))
 MAX_RETRIES_OFF_TOPIC: int = int(os.getenv("MAX_RETRIES_OFF_TOPIC", "1"))
 MAX_QUESTIONS_PER_SESSION: int = int(os.getenv("MAX_QUESTIONS_PER_SESSION", "12"))
 
 APP_NAME: str = os.getenv("APP_NAME", "TechInterviewAgent").strip()
+
+# Voice lane: after interviewer audio finishes, wait for candidate speech (browser auto-sends).
+# Stage 1 — soft nudge (LLM + TTS). Stage 2 — auto-advance to next planned question if still silent.
+VOICE_SILENCE_NUDGE_SECONDS: float = float(os.getenv("VOICE_SILENCE_NUDGE_SECONDS", "12"))
+VOICE_SILENCE_SKIP_SECONDS: float = float(os.getenv("VOICE_SILENCE_SKIP_SECONDS", "16"))

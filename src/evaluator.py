@@ -11,7 +11,7 @@ from typing import Any
 
 from groq import Groq
 
-from src.config import GROQ_API_KEY, MODEL_EVAL
+from src.settings import GROQ_API_KEY, MODEL_EVAL
 from src.schemas import EvaluationReport, InterviewPlan, Transcript
 
 
@@ -38,7 +38,8 @@ OUTPUT ONLY valid JSON (no markdown fences, no commentary) with this exact shape
 }
 
 Rules:
-- Ground every competency assessment in evidence quotes taken VERBATIM from CANDIDATE turns in the transcript JSON. Quotes must be exact substrings of candidate text (short phrases to 1-2 sentences).
+- Produce a **cumulative, holistic** assessment across the **entire** interview: every question and follow-up in the plan may inform judgment, but the recommendation must reflect performance **over the full session**, not isolated answers only.
+- Ground every competency row in evidence quotes taken VERBATIM from CANDIDATE turns in the transcript JSON. Prefer quotes from different parts of the interview when possible. Quotes must be exact substrings of candidate text (short phrases to 1-2 sentences).
 - turn_id must match the transcript turn id for that quote when possible; if unknown use "".
 - If the transcript lacks evidence for a competency, score conservatively and include at most one evidence item explaining insufficiency.
 - Do not invent candidate statements; quotes must appear in the transcript.

@@ -24,10 +24,11 @@ You can also paste a Groq key in the UI (optional); it is sent only to your loca
 
 ### Voice + face interview (Groq Whisper + Orpheus)
 
-1. On the plan screen, choose **Start as: Voice + face** (voice-first skips the text SSE opening).
-2. After the session starts, allow **camera + microphone**, then **Connect voice**.
-3. **Hold to speak** — release to send audio; Groq **Whisper** transcribes it, **Llama** generates the interviewer reply, **Orpheus** reads it aloud (WAV chunks over WebSocket).
-4. **Next (voice)** advances the planned question on the voice lane. Text controls (Send / Next) still work if you switch back mentally — hide the text box when using voice-only flow.
+1. On the plan screen, choose **Start as: Voice + face** — the voice WebSocket connects automatically after you start the session (camera + mic permission).
+2. **Full-screen** layout focuses on you and the interviewer orb; use **Exit fullscreen** to show the normal page chrome again (session stays live).
+3. After each interviewer line (Orpheus TTS), the app **listens automatically** and stops when you pause (VAD-style); you can still **Hold to speak (override)** if needed.
+4. If you stay silent, the server sends a **short nudge**, then **auto-advances** to the next planned question (timings: `VOICE_SILENCE_NUDGE_SECONDS`, `VOICE_SILENCE_SKIP_SECONDS` in `.env`).
+5. **Evaluate** uses the **full cumulative transcript** across all questions (see evaluator prompt).
 
 Requires **HTTPS or localhost** for `getUserMedia` in most browsers.
 
