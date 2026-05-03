@@ -31,6 +31,7 @@ from src.schemas import InterviewPlan, Transcript, TranscriptTurn
 
 app = FastAPI(title="Technical Interview Agent", version="0.3.0")
 app.mount("/fixtures", StaticFiles(directory=str(_ROOT / "fixtures")), name="fixtures")
+app.mount("/samples", StaticFiles(directory=str(_ROOT / "samples")), name="samples")
 
 SESSIONS: dict[str, dict[str, Any]] = {}
 _SESSION_LOCK = threading.Lock()

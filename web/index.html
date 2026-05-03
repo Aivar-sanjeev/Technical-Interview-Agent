@@ -282,6 +282,11 @@
           <div id="evalIssues" style="display:none;margin:.5rem 0;font-size:.82rem;color:var(--warn)"></div>
           <div id="evalRender" style="display:none;margin-top:.75rem"></div>
           <pre id="evalOut" style="display:none;white-space:pre-wrap;font-size:.72rem;color:var(--muted);margin-top:1rem"></pre>
+          <div class="row" style="margin-top:1rem">
+            <button type="button" class="ghost" id="btnEvalBackInterview">Back to interview</button>
+            <button type="button" class="ghost" id="btnEvalRestart">New session (inputs)</button>
+            <a class="kbd" href="/samples/evaluation_sample.json" target="_blank" rel="noopener">Sample JSON file</a>
+          </div>
         </div>
       </div>
     </div>
@@ -592,6 +597,22 @@
         el.appendChild(d);
       });
     }
+
+    $("btnEvalBackInterview").onclick = () => {
+      show($("screen4"), false);
+      show($("screen3"), true);
+      setStep("3");
+    };
+    $("btnEvalRestart").onclick = () => {
+      show($("screen4"), false);
+      show($("screen3"), false);
+      show($("screen2"), false);
+      show($("screen1"), true);
+      setStep("1");
+      sessionId = null;
+      planJson = null;
+      $("chat").innerHTML = "";
+    };
 
     $("btnToEval").onclick = async () => {
       if (!sessionId) return;
