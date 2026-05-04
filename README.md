@@ -75,8 +75,8 @@ Also served statically at **http://127.0.0.1:8840/samples/evaluation_sample.json
 | | |
 |---|---|
 | **First commit** (root of `main`) | `7d7270c` — **2026-05-03 21:38:39 UTC** |
-| **Latest commit** (`main` tip) | `f8b46e7` — **2026-05-04 06:28:27 UTC** |
-| **Elapsed (root → tip)** | **8 h 49 m 48 s** (31,788 s) across **12** commits on `main` |
+| **Latest commit** (`main` tip) | `8898191` — **2026-05-04 06:39:12 UTC** |
+| **Elapsed (root → tip)** | **9 h 0 m 33 s** (32,433 s) across **13** commits on `main` |
 
 Recompute (PowerShell, repo root):
 
