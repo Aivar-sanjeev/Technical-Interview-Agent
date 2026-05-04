@@ -26,20 +26,9 @@ Paste your **NVIDIA API key** in the UI (optional if set in `.env`); it is sent 
 
 1. On the plan screen, choose **Start as: Voice + face** — the voice WebSocket connects automatically after you start the session (camera + mic permission).
 2. **Full-screen** layout focuses on you and the interviewer orb; use **Exit fullscreen** to show the normal page chrome again (session stays live).
-3. After each interviewer line (browser speech), the app **listens automatically** and stops when you pause (VAD-style); you can still **Hold to speak (override)** if needed. **ffmpeg** on `PATH` is required to decode WebM from the mic for Nemotron ASR.
-4. If you stay silent, the server sends a **short nudge**, then **auto-advances** to the next planned question (timings: `VOICE_SILENCE_NUDGE_SECONDS`, `VOICE_SILENCE_SKIP_SECONDS` in `.env`).
-5. **Evaluate** uses the **full cumulative transcript** across all questions (see evaluator prompt).
-
-### Voice pacing (wait longer before sending your answer)
-
-The browser **auto-listen** path waits for real speech, then for a **longer pause** (~1.2s of quiet at 60fps) before it stops recording and sends audio to Nemotron. It also waits at least **~2.8s** after “Your turn” before it can end the clip on silence alone, so brief thinking pauses do not cut you off. The hard cap per listen is **90s** (then it sends whatever was captured).
-
-To tune **server-side** silence (nudge → auto next question), edit `.env`:
-
-- **`VOICE_SILENCE_NUDGE_SECONDS`** (default **22**) — how long after the interviewer finishes before a silence nudge.
-- **`VOICE_SILENCE_SKIP_SECONDS`** (default **28**) — additional wait after the nudge before moving to the next planned question if you still have not replied.
-
-Increase those values if you want more time before auto-advance. **Next question** in the UI still advances manually when you are ready.
+3. After each interviewer line (browser speech), it’s your turn: click **Start answer**, speak (everything until **End & send** is recorded and transcribed). **ffmpeg** on `PATH` is required to decode WebM from the mic for Nemotron ASR.
+4. **Next question** (toolbar or voice panel) **stops** the interviewer’s speech and moves to the next planned question. If you never start an answer, **silence nudge / auto-advance** still applies (see `.env`: `VOICE_SILENCE_NUDGE_SECONDS`, `VOICE_SILENCE_SKIP_SECONDS`).
+5. **Evaluate** builds a **performance report** (strengths, gaps, scores) from the **full cumulative transcript** across all questions (see evaluator prompt).
 
 Requires **HTTPS or localhost** for `getUserMedia` in most browsers.
 
@@ -76,6 +65,29 @@ Also served statically at **http://127.0.0.1:8840/samples/evaluation_sample.json
 | Separable components | `src/schemas.py` contracts; see ARCHITECTURE.md |
 | Silence / off-topic / clarify | `src/policies.py` + `event_type` in API |
 | No coaching mid-interview | Conductor system prompt; clarifications only |
+
+## Run metadata (models, duration, tech stack)
+
+**Repository:** [github.com/Aivar-sanjeev/Technical-Interview-Agent](https://github.com/Aivar-sanjeev/Technical-Interview-Agent)
+
+Use the table for each **end-to-end interview session** (plan → voice/text session → evaluate). Fill timing from wall clock or server logs.
+
+### Tech stack
+
+Python 3, **FastAPI**, **uvicorn**, **SSE**, **NVIDIA NIM** (`integrate.api.nvidia.com`), **Nemotron ASR** (Riva gRPC), browser **Web Speech API** (TTS), optional **ffmpeg** for WebM decode.
+
+### Models used (configure in `.env` / UI)
+
+| Role | Typical model / service | Notes |
+|------|-------------------------|--------|
+| Plan + interview + evaluation | `openai/gpt-oss-20b` (default in app) | NVIDIA NIM chat; see `.env.example`. |
+| Candidate speech | Nemotron ASR (streaming) | Riva / NVIDIA STT endpoint. |
+
+### Run log (fill per execution)
+
+| Task / run | Command / flow | Models used | Tech stack | Started (UTC) | Finished (UTC) | Wall duration |
+|------------|----------------|-------------|------------|---------------|----------------|-----------------|
+| Example full interview | `uvicorn web_app:app …` → plan → session → Evaluate | as configured | stack above | — | — | — |
 
 ## License
 
