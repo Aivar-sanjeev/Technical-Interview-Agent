@@ -78,6 +78,8 @@ Also served statically at **http://127.0.0.1:8840/samples/evaluation_sample.json
 | **Latest commit** (`main` tip) | `8898191` — **2026-05-04 06:39:12 UTC** |
 | **Elapsed (root → tip)** | **9 h 0 m 33 s** (32,433 s) across **13** commits on `main` |
 
+*Tip hash and “latest” time advance with new commits; the script below always matches your clone.*
+
 Recompute (PowerShell, repo root):
 
 ```powershell
