@@ -70,6 +70,23 @@ Also served statically at **http://127.0.0.1:8840/samples/evaluation_sample.json
 
 **Repository:** [github.com/Aivar-sanjeev/Technical-Interview-Agent](https://github.com/Aivar-sanjeev/Technical-Interview-Agent)
 
+### Project duration (`main`: first commit → latest)
+
+| | |
+|---|---|
+| **First commit** (root of `main`) | `7d7270c` — **2026-05-03 21:38:39 UTC** |
+| **Latest commit** (`main` tip) | `f8b46e7` — **2026-05-04 06:28:27 UTC** |
+| **Elapsed (root → tip)** | **8 h 49 m 48 s** (31,788 s) across **12** commits on `main` |
+
+Recompute (PowerShell, repo root):
+
+```powershell
+$root = git rev-list --max-parents=0 main; $head = git rev-parse main
+$t0 = [int](git show -s --format=%at $root); $t1 = [int](git show -s --format=%at $head)
+$ts = [TimeSpan]::FromSeconds($t1 - $t0)
+"Elapsed: {0}d {1}h {2}m {3}s  (commits: {4})" -f $ts.Days, $ts.Hours, $ts.Minutes, $ts.Seconds, (git rev-list --count main)
+```
+
 Use the table for each **end-to-end interview session** (plan → voice/text session → evaluate). Fill timing from wall clock or server logs.
 
 ### Tech stack
